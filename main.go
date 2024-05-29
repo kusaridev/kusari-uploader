@@ -16,23 +16,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
-	"time"
+	"path/filepath"
 
-	"github.com/Khan/genqlient/graphql"
-	"github.com/guacsec/guac/pkg/assembler/clients/helpers"
-	"github.com/guacsec/guac/pkg/handler/collector"
-	"github.com/guacsec/guac/pkg/handler/collector/file"
-	"github.com/guacsec/guac/pkg/handler/processor"
-	"github.com/guacsec/guac/pkg/handler/processor/process"
-	"github.com/guacsec/guac/pkg/ingestor/parser"
 	"github.com/guacsec/guac/pkg/logging"
-	"github.com/sigstore/cosign/v2/pkg/providers"
-	_ "github.com/sigstore/cosign/v2/pkg/providers/github"
-	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 // This application utilizes oauth client credentials flow to obtain a jwt
@@ -47,101 +41,129 @@ func main() {
 		logger.Fatalf("Invalid args")
 	}
 
-	files := os.Args[1]
-	tokenURL := os.Args[3]
-	clientID := os.Args[4]
-	clientSecret := os.Args[5]
+	filePath := os.Args[1]
+	clientID := os.Args[2]
+	clientSecret := os.Args[3]
+	tenantEndPoint := os.Args[4]
+	tokenEndPoint := os.Args[5]
 
-	token, err := authToken(ctx, tokenURL, clientID, clientSecret)
+	authorizedClient := getAuthorizedClient(ctx, clientID, clientSecret, tokenEndPoint)
+
+	// Check if the provided path is a directory or a file
+	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		logger.Fatalf("Unable to get auth token: %v", err)
+		fmt.Println("Error getting file info:", err)
+		return
 	}
 
-	c := &http.Client{
-		Transport: &oauth2.Transport{
-			Source: oauth2.StaticTokenSource(token),
-		},
+	if fileInfo.IsDir() {
+		if err := uploadDirectory(authorizedClient, tenantEndPoint, filePath); err != nil {
+			fmt.Println("Error uploading:", err)
+			return
+		}
+	} else {
+		if err := uploadSingleFile(authorizedClient, tenantEndPoint, filePath); err != nil {
+			fmt.Println("Error uploading:", err)
+			return
+		}
 	}
-
-	if err := collectFiles(ctx, files, gqlClient); err != nil {
-		logger.Fatalf("Unable to send files to guac: %v", err)
-	}
+	fmt.Println("Upload completed successfully")
 }
 
-func authToken(ctx context.Context, tokenURL, clientID string, clientSecret string) (*oauth2.Token, error) {
-	logger := logging.FromContext(ctx)
-	if !providers.Enabled(ctx) {
-		return nil, fmt.Errorf("incorrect environment")
+func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL string) *http.Client {
+	config := &clientcredentials.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		TokenURL:     tokenURL,
 	}
-	token, err := providers.Provide(ctx, tokenURL)
-	if err != nil {
-		return nil, err
-	}
-	if token == "" {
-		return nil, fmt.Errorf("empty token")
-	}
-	logger.Infof("ID token aquired")
 
-	var conf oauth2.Config
-	conf.Endpoint.TokenURL = tokenURL
-	conf.Endpoint.AuthStyle = oauth2.AuthStyleInParams
-	options := []oauth2.AuthCodeOption{
-		oauth2.SetAuthURLParam("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
-		oauth2.SetAuthURLParam("scope", "openid"),
-		oauth2.SetAuthURLParam("client_id", clientID),
-		oauth2.SetAuthURLParam("client_secret", clientSecret),
-		oauth2.SetAuthURLParam("audience", audience),
-		oauth2.SetAuthURLParam("assertion", token),
-	}
-	tok, err := conf.Exchange(ctx, "", options...)
-	if err != nil {
-		return nil, err
-	}
-	conf.cli
-	if tok.AccessToken == "" {
-		return nil, fmt.Errorf("empty token")
-	}
-	logger.Infof("Access token acquired")
-	return tok, nil
+	return config.Client(ctx)
 }
 
-func collectFiles(ctx context.Context, files string, gqlClient graphql.Client) error {
-	logger := logging.FromContext(ctx)
+func getPresignedUrl(authenticatedClient *http.Client, tenantApiEndpoint string, payloadBytes []byte) (string, error) {
 
-	fileCollector := file.NewFileCollector(ctx, files, false, time.Second)
-	if err := collector.RegisterDocumentCollector(fileCollector, file.FileCollector); err != nil {
-		return fmt.Errorf("unable to register file collector: %w", err)
+	resp, err := authenticatedClient.Post(tenantApiEndpoint+"/presign", "application/json", bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to POST to tenant endpoint: %s, with error: %w", tenantApiEndpoint, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body with error: %w", err)
 	}
 
-	assemblerFunc := helpers.GetBulkAssembler(ctx, gqlClient)
+	type url struct {
+		PresignedUrl string `json:"presignedUrl"`
+	}
 
-	emit := func(d *processor.Document) error {
-		logger.Infof(d.SourceInformation.Source)
-		docTree, err := process.Process(ctx, d)
+	var result url
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return "", fmt.Errorf("failed to unmarshal the results with body: %s with error: %w", string(body), err)
+	}
+
+	presignedUrl := result.PresignedUrl
+
+	return presignedUrl, nil
+}
+
+func uploadDirectory(authenticatedClient *http.Client, tenantApiEndpoint, dirPath string) error {
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return fmt.Errorf("unable to process doc: %w, format: %v, document: %v", err, d.Format, d.Type)
+			return err
 		}
-
-		predicates, _, err := parser.ParseDocumentTree(ctx, docTree)
-		if err != nil {
-			return fmt.Errorf("unable to ingest doc tree: %w", err)
+		if !info.IsDir() {
+			err = uploadSingleFile(authenticatedClient, tenantApiEndpoint, path)
+			if err != nil {
+				return err
+			}
 		}
-
-		if err := assemblerFunc(predicates); err != nil {
-			return fmt.Errorf("unable to assemble graphs: %w", err)
-		}
-		logger.Infof("completed doc %+v", d.SourceInformation.Source)
 		return nil
+	})
+	return err
+}
+
+func uploadSingleFile(authenticatedClient *http.Client, tenantApiEndpoint, filePath string) error {
+	// Prepare the payload for the presigned URL request
+	payload := map[string]string{
+		"filename": filePath,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("error creating JSON payload: %w", err)
+	}
+	presignedUrl, err := getPresignedUrl(authenticatedClient, tenantApiEndpoint, payloadBytes)
+	if err != nil {
+		return err
 	}
 
-	errHandler := func(err error) bool {
-		if err == nil {
-			logger.Info("collector ended gracefully")
-			return true
-		}
-		logger.Errorf("collector ended with error: %v", err)
-		return false
+	return uploadFile(presignedUrl, filePath)
+}
+
+func uploadFile(presignedUrl, filePath string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	req, err := http.NewRequest(http.MethodPut, presignedUrl, file)
+	if err != nil {
+		return err
 	}
 
-	return collector.Collect(ctx, emit, errHandler)
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upload failed: %s", body)
+	}
+
+	return nil
 }
