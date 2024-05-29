@@ -169,6 +169,8 @@ func uploadFile(presignedUrl, filePath string) error {
 		return err
 	}
 
+	req.Header.Set("Content-Type", "multipart/form-data")
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
