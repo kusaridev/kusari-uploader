@@ -25,6 +25,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/guacsec/guac/pkg/events"
+	"github.com/guacsec/guac/pkg/handler/processor"
 	"github.com/guacsec/guac/pkg/logging"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -81,7 +83,6 @@ func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL s
 }
 
 func getPresignedUrl(authenticatedClient *http.Client, tenantApiEndpoint string, payloadBytes []byte) (string, error) {
-
 	resp, err := authenticatedClient.Post(tenantApiEndpoint+"/presign", "application/json", bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		return "", fmt.Errorf("failed to POST to tenant endpoint: %s, with error: %w", tenantApiEndpoint, err)
@@ -142,13 +143,28 @@ func uploadSingleFile(authenticatedClient *http.Client, tenantApiEndpoint, fileP
 }
 
 func uploadFile(presignedUrl, filePath string) error {
-	file, err := os.Open(filePath)
+	blob, err := os.ReadFile(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("error reading file: %s, err: %w", filePath, err)
 	}
-	defer file.Close()
 
-	req, err := http.NewRequest(http.MethodPut, presignedUrl, file)
+	doc := &processor.Document{
+		Blob:   blob,
+		Type:   processor.DocumentUnknown,
+		Format: processor.FormatUnknown,
+		SourceInformation: processor.SourceInformation{
+			Collector:   "Kusari-Uploader",
+			Source:      fmt.Sprintf("file:///%s", filePath),
+			DocumentRef: events.GetDocRef(blob),
+		},
+	}
+
+	docByte, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("failed marshal of document: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPut, presignedUrl, bytes.NewReader(docByte))
 	if err != nil {
 		return err
 	}
