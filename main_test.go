@@ -113,18 +113,21 @@ func Test_getPresignedUrl(t *testing.T) {
 }
 
 func Test_uploadDirectory(t *testing.T) {
-	mock := &ClientMock{
-		DoFunc: func(req *http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(bytes.NewBufferString("")),
-			}, nil
-		},
+	authClientMock := &ClientMock{
 		PostFunc: func(url, contentType string, body io.Reader) (resp *http.Response, err error) {
 			returnedBody := `{"presignedUrl": "http://example.com/upload"}`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(bytes.NewBufferString(returnedBody)),
+			}, nil
+		},
+	}
+
+	defaultClientMock := &ClientMock{
+		DoFunc: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewBufferString("")),
 			}, nil
 		},
 	}
@@ -157,7 +160,7 @@ func Test_uploadDirectory(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := uploadDirectory(mock, tt.args.tenantApiEndpoint, tt.args.dirPath); (err != nil) != tt.wantErr {
+			if err := uploadDirectory(authClientMock, defaultClientMock, tt.args.tenantApiEndpoint, tt.args.dirPath); (err != nil) != tt.wantErr {
 				t.Errorf("uploadDirectory() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -167,6 +170,7 @@ func Test_uploadDirectory(t *testing.T) {
 func Test_uploadSingleFile(t *testing.T) {
 	type args struct {
 		authenticatedClient *ClientMock
+		defaultClient       *ClientMock
 		tenantApiEndpoint   string
 		filePath            string
 	}
@@ -179,17 +183,19 @@ func Test_uploadSingleFile(t *testing.T) {
 			name: "Successful Single File Upload",
 			args: args{
 				authenticatedClient: &ClientMock{
-					DoFunc: func(req *http.Request) (*http.Response, error) {
-						return &http.Response{
-							StatusCode: http.StatusOK,
-							Body:       io.NopCloser(bytes.NewBufferString("")),
-						}, nil
-					},
 					PostFunc: func(url, contentType string, body io.Reader) (resp *http.Response, err error) {
 						returnedBody := `{"presignedUrl": "http://example.com/upload"}`
 						return &http.Response{
 							StatusCode: http.StatusOK,
 							Body:       io.NopCloser(bytes.NewBufferString(returnedBody)),
+						}, nil
+					},
+				},
+				defaultClient: &ClientMock{
+					DoFunc: func(req *http.Request) (*http.Response, error) {
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Body:       io.NopCloser(bytes.NewBufferString("")),
 						}, nil
 					},
 				},
@@ -216,6 +222,14 @@ func Test_uploadSingleFile(t *testing.T) {
 						}, nil
 					},
 				},
+				defaultClient: &ClientMock{
+					DoFunc: func(req *http.Request) (*http.Response, error) {
+						return &http.Response{
+							StatusCode: http.StatusInternalServerError,
+							Body:       io.NopCloser(bytes.NewBufferString("")),
+						}, nil
+					},
+				},
 				tenantApiEndpoint: "http://example.com",
 				filePath:          "./testdata/hello",
 			},
@@ -224,7 +238,7 @@ func Test_uploadSingleFile(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := uploadSingleFile(tt.args.authenticatedClient, tt.args.tenantApiEndpoint, tt.args.filePath); (err != nil) != tt.wantErr {
+			if err := uploadSingleFile(tt.args.authenticatedClient, tt.args.defaultClient, tt.args.tenantApiEndpoint, tt.args.filePath); (err != nil) != tt.wantErr {
 				t.Errorf("uploadSingleFile() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

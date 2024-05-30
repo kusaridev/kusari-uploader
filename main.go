@@ -63,14 +63,16 @@ func main() {
 			Msg("error getting file info:")
 	}
 
+	defaultClient := &http.Client{}
+
 	if fileInfo.IsDir() {
-		if err := uploadDirectory(authorizedClient, tenantEndPoint, filePath); err != nil {
+		if err := uploadDirectory(authorizedClient, defaultClient, tenantEndPoint, filePath); err != nil {
 			log.Fatal().
 				Err(err).
 				Msg("uploadDirectory failed with error")
 		}
 	} else {
-		if err := uploadSingleFile(authorizedClient, tenantEndPoint, filePath); err != nil {
+		if err := uploadSingleFile(authorizedClient, defaultClient, tenantEndPoint, filePath); err != nil {
 			log.Fatal().
 				Err(err).
 				Msg("uploadSingleFile failed with error")
@@ -91,8 +93,8 @@ func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL s
 }
 
 // getPresignedUrl utilizes authorized client to obtain the presigned URL to upload to S3
-func getPresignedUrl(authenticatedClient HttpClient, tenantApiEndpoint string, payloadBytes []byte) (string, error) {
-	resp, err := authenticatedClient.Post(tenantApiEndpoint+"/presign", "application/json", bytes.NewBuffer(payloadBytes))
+func getPresignedUrl(authorizedClient HttpClient, tenantApiEndpoint string, payloadBytes []byte) (string, error) {
+	resp, err := authorizedClient.Post(tenantApiEndpoint+"/presign", "application/json", bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		return "", fmt.Errorf("failed to POST to tenant endpoint: %s, with error: %w", tenantApiEndpoint, err)
 	}
@@ -119,13 +121,13 @@ func getPresignedUrl(authenticatedClient HttpClient, tenantApiEndpoint string, p
 }
 
 // uploadDirectory uses filepath.Walk to walk through the directory and upload the files that are found
-func uploadDirectory(authenticatedClient HttpClient, tenantApiEndpoint, dirPath string) error {
+func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, dirPath string) error {
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() {
-			err = uploadSingleFile(authenticatedClient, tenantApiEndpoint, path)
+			err = uploadSingleFile(authorizedClient, defaultClient, tenantApiEndpoint, path)
 			if err != nil {
 				return fmt.Errorf("uploadSingleFile failed with error: %w", err)
 			}
@@ -136,7 +138,7 @@ func uploadDirectory(authenticatedClient HttpClient, tenantApiEndpoint, dirPath 
 }
 
 // uploadSingleFile creates a presigned URL for the filepath and calls uploadFile to upload the actual file
-func uploadSingleFile(authenticatedClient HttpClient, tenantApiEndpoint, filePath string) error {
+func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, filePath string) error {
 	// Prepare the payload for the presigned URL request
 	payload := map[string]string{
 		"filename": filePath,
@@ -145,16 +147,17 @@ func uploadSingleFile(authenticatedClient HttpClient, tenantApiEndpoint, filePat
 	if err != nil {
 		return fmt.Errorf("error creating JSON payload: %w", err)
 	}
-	presignedUrl, err := getPresignedUrl(authenticatedClient, tenantApiEndpoint, payloadBytes)
+	presignedUrl, err := getPresignedUrl(authorizedClient, tenantApiEndpoint, payloadBytes)
 	if err != nil {
 		return err
 	}
 
-	return uploadBlob(authenticatedClient, presignedUrl, filePath)
+	// pass in default client without the jwt other wise it will error with both the presigned url and jwt
+	return uploadBlob(defaultClient, presignedUrl, filePath)
 }
 
 // uploadBlob takes the file and creates a `processor.Document` blob which is uploaded to S3
-func uploadBlob(authenticatedClient HttpClient, presignedUrl, filePath string) error {
+func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string) error {
 	blob, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("error reading file: %s, err: %w", filePath, err)
@@ -183,7 +186,7 @@ func uploadBlob(authenticatedClient HttpClient, presignedUrl, filePath string) e
 
 	req.Header.Set("Content-Type", "multipart/form-data")
 
-	resp, err := authenticatedClient.Do(req)
+	resp, err := defaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to http.Client Do with error: %w", err)
 	}
