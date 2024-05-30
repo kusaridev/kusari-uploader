@@ -139,9 +139,15 @@ func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoi
 
 // uploadSingleFile creates a presigned URL for the filepath and calls uploadFile to upload the actual file
 func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, filePath string) error {
+
+	blob, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("error reading file: %s, err: %w", filePath, err)
+	}
+
 	// Prepare the payload for the presigned URL request
 	payload := map[string]string{
-		"filename": filePath,
+		"filename": events.GetDocRef(blob),
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -153,24 +159,19 @@ func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpo
 	}
 
 	// pass in default client without the jwt other wise it will error with both the presigned url and jwt
-	return uploadBlob(defaultClient, presignedUrl, filePath)
+	return uploadBlob(defaultClient, presignedUrl, filePath, blob)
 }
 
 // uploadBlob takes the file and creates a `processor.Document` blob which is uploaded to S3
-func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string) error {
-	blob, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("error reading file: %s, err: %w", filePath, err)
-	}
-
+func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFile []byte) error {
 	doc := &processor.Document{
-		Blob:   blob,
+		Blob:   readFile,
 		Type:   processor.DocumentUnknown,
 		Format: processor.FormatUnknown,
 		SourceInformation: processor.SourceInformation{
 			Collector:   "Kusari-Uploader",
 			Source:      fmt.Sprintf("file:///%s", filePath),
-			DocumentRef: events.GetDocRef(blob),
+			DocumentRef: events.GetDocRef(readFile),
 		},
 	}
 
@@ -179,7 +180,7 @@ func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string) error {
 		return fmt.Errorf("failed marshal of document: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPut, presignedUrl, bytes.NewReader(docByte))
+	req, err := http.NewRequest(http.MethodPut, presignedUrl, bytes.NewBuffer(docByte))
 	if err != nil {
 		return fmt.Errorf("failed to create new http request with error: %w", err)
 	}
