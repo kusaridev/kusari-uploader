@@ -1,5 +1,5 @@
 //
-// Copyright 2023 Kusari, Inc.
+// Copyright 2024 Kusari, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,6 +31,11 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 )
 
+type HttpClient interface {
+	Do(req *http.Request) (*http.Response, error)
+	Post(url string, contentType string, body io.Reader) (resp *http.Response, err error)
+}
+
 // This application utilizes oauth client credentials flow to obtain a jwt
 // which can be used to create a presigned url to upload files to an authorized
 // S3 bucket. Before the files get uploaded, they are converted to processor.Document
@@ -51,28 +56,26 @@ func main() {
 
 	authorizedClient := getAuthorizedClient(ctx, clientID, clientSecret, tokenEndPoint)
 
-	// Check if the provided path is a directory or a file
+	// check if the provided path is a directory or a file
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		fmt.Println("Error getting file info:", err)
-		return
+		logger.Fatalf("error getting file info:", err)
 	}
 
 	if fileInfo.IsDir() {
 		if err := uploadDirectory(authorizedClient, tenantEndPoint, filePath); err != nil {
-			fmt.Println("Error uploading:", err)
-			return
+			logger.Fatalf("uploadDirectory failed with error:", err)
 		}
 	} else {
 		if err := uploadSingleFile(authorizedClient, tenantEndPoint, filePath); err != nil {
-			fmt.Println("Error uploading:", err)
-			return
+			logger.Fatalf("uploadSingleFile failed with error:", err)
 		}
 	}
 	fmt.Println("Upload completed successfully")
 }
 
-func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL string) *http.Client {
+// getAuthorizedClient utilizes oauth2 client credential flow to obtain an authorized client
+func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL string) HttpClient {
 	config := &clientcredentials.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -82,7 +85,8 @@ func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL s
 	return config.Client(ctx)
 }
 
-func getPresignedUrl(authenticatedClient *http.Client, tenantApiEndpoint string, payloadBytes []byte) (string, error) {
+// getPresignedUrl utilizes authorized client to obtain the presigned URL to upload to S3
+func getPresignedUrl(authenticatedClient HttpClient, tenantApiEndpoint string, payloadBytes []byte) (string, error) {
 	resp, err := authenticatedClient.Post(tenantApiEndpoint+"/presign", "application/json", bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		return "", fmt.Errorf("failed to POST to tenant endpoint: %s, with error: %w", tenantApiEndpoint, err)
@@ -109,7 +113,8 @@ func getPresignedUrl(authenticatedClient *http.Client, tenantApiEndpoint string,
 	return presignedUrl, nil
 }
 
-func uploadDirectory(authenticatedClient *http.Client, tenantApiEndpoint, dirPath string) error {
+// uploadDirectory uses filepath.Walk to walk through the directory and upload the files that are found
+func uploadDirectory(authenticatedClient HttpClient, tenantApiEndpoint, dirPath string) error {
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -117,7 +122,7 @@ func uploadDirectory(authenticatedClient *http.Client, tenantApiEndpoint, dirPat
 		if !info.IsDir() {
 			err = uploadSingleFile(authenticatedClient, tenantApiEndpoint, path)
 			if err != nil {
-				return err
+				return fmt.Errorf("uploadSingleFile failed with error: %w", err)
 			}
 		}
 		return nil
@@ -125,7 +130,8 @@ func uploadDirectory(authenticatedClient *http.Client, tenantApiEndpoint, dirPat
 	return err
 }
 
-func uploadSingleFile(authenticatedClient *http.Client, tenantApiEndpoint, filePath string) error {
+// uploadSingleFile creates a presigned URL for the filepath and calls uploadFile to upload the actual file
+func uploadSingleFile(authenticatedClient HttpClient, tenantApiEndpoint, filePath string) error {
 	// Prepare the payload for the presigned URL request
 	payload := map[string]string{
 		"filename": filePath,
@@ -139,10 +145,11 @@ func uploadSingleFile(authenticatedClient *http.Client, tenantApiEndpoint, fileP
 		return err
 	}
 
-	return uploadFile(presignedUrl, filePath)
+	return uploadBlob(authenticatedClient, presignedUrl, filePath)
 }
 
-func uploadFile(presignedUrl, filePath string) error {
+// uploadBlob takes the file and creates a `processor.Document` blob which is uploaded to S3
+func uploadBlob(authenticatedClient HttpClient, presignedUrl, filePath string) error {
 	blob, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("error reading file: %s, err: %w", filePath, err)
@@ -166,15 +173,14 @@ func uploadFile(presignedUrl, filePath string) error {
 
 	req, err := http.NewRequest(http.MethodPut, presignedUrl, bytes.NewReader(docByte))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create new http request with error: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "multipart/form-data")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := authenticatedClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to http.Client Do with error: %w", err)
 	}
 	defer resp.Body.Close()
 
