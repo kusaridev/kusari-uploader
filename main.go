@@ -27,7 +27,7 @@ import (
 
 	"github.com/guacsec/guac/pkg/events"
 	"github.com/guacsec/guac/pkg/handler/processor"
-	"github.com/guacsec/guac/pkg/logging"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
@@ -41,11 +41,10 @@ type HttpClient interface {
 // S3 bucket. Before the files get uploaded, they are converted to processor.Document
 // types that GUAC understands and can ingest.
 func main() {
-	ctx := logging.WithLogger(context.Background())
-	logger := logging.FromContext(ctx)
+	ctx := context.Background()
 
 	if len(os.Args) != 6 {
-		logger.Fatalf("Invalid args")
+		log.Fatal().Msg("Invalid args")
 	}
 
 	filePath := os.Args[1]
@@ -59,16 +58,22 @@ func main() {
 	// check if the provided path is a directory or a file
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		logger.Fatalf("error getting file info:", err)
+		log.Fatal().
+			Err(err).
+			Msg("error getting file info:")
 	}
 
 	if fileInfo.IsDir() {
 		if err := uploadDirectory(authorizedClient, tenantEndPoint, filePath); err != nil {
-			logger.Fatalf("uploadDirectory failed with error:", err)
+			log.Fatal().
+				Err(err).
+				Msg("uploadDirectory failed with error")
 		}
 	} else {
 		if err := uploadSingleFile(authorizedClient, tenantEndPoint, filePath); err != nil {
-			logger.Fatalf("uploadSingleFile failed with error:", err)
+			log.Fatal().
+				Err(err).
+				Msg("uploadSingleFile failed with error")
 		}
 	}
 	fmt.Println("Upload completed successfully")
