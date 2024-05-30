@@ -18,11 +18,3 @@ jobs:
         check-latest: true
     - uses: ko-build/setup-ko@v0.6
     - run: ko build
-
-  # Build, push image to ECR and ingest SBOM to GUAC
-  build-n-push-to-ecr:
-    uses: kusaridev/iac/.github/workflows/reusable-build-upload-container-ko.yml@main
-    with:
-      repository: kusari-uploader
-      buildPath: ./
-      goVersion: "1.22.3"
