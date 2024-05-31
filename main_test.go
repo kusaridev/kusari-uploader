@@ -205,6 +205,14 @@ func Test_uploadSingleFile(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "skip empty file",
+			args: args{
+				tenantApiEndpoint: "http://example.com",
+				filePath:          "./testdata/empty",
+			},
+			wantErr: false,
+		},
+		{
 			name: "Failed Single File Upload - Presigned URL Error",
 			args: args{
 				authenticatedClient: &ClientMock{

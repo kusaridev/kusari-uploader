@@ -139,6 +139,15 @@ func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoi
 
 // uploadSingleFile creates a presigned URL for the filepath and calls uploadFile to upload the actual file
 func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, filePath string) error {
+	// check that the file is not empty
+	checkFile, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to get stats on filepath: %s, with error: %w", filePath, err)
+	}
+	// if file is empty, do not upload and return nil
+	if checkFile.Size() == 0 {
+		return nil
+	}
 
 	blob, err := os.ReadFile(filePath)
 	if err != nil {
