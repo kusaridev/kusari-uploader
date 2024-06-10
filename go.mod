@@ -3,7 +3,7 @@ module github.com/kusaridev/kusari-uploader
 go 1.22.3
 
 require (
-	github.com/guacsec/guac v0.6.1-0.20240530210421-ccad6b37591b
+	github.com/guacsec/guac v0.7.2
 	golang.org/x/oauth2 v0.20.0
 )
 
