@@ -25,10 +25,12 @@ jobs:
     - name: run ko build and publish image
       run: |
         ko build --bare \
+          --platform=linux/amd64,linux/arm64 \
           --tags=latest,sha.${{ github.sha }}
 
     - name: run ko build and publish image
       if: startsWith(github.ref, 'refs/tags/')
       run: |
         ko build --bare \
+          --platform=linux/amd64,linux/arm64 \
           --tags=latest,sha.${{ github.sha }},${{ github.ref_name }}
