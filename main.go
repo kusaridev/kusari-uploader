@@ -100,6 +100,14 @@ func getPresignedUrl(authorizedClient HttpClient, tenantApiEndpoint string, payl
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return "", fmt.Errorf("getPresignedUrl failed with unauthorized request: %d", resp.StatusCode)
+		}
+		// otherwise return an error
+		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body with error: %w", err)
@@ -201,6 +209,14 @@ func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFil
 		return fmt.Errorf("failed to http.Client Do with error: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("uploadBlob failed with unauthorized request: %d", resp.StatusCode)
+		}
+		// otherwise return an error
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
