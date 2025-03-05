@@ -1,8 +1,6 @@
 module github.com/kusaridev/kusari-uploader
 
-go 1.23.4
-
-toolchain go1.23.5
+go 1.23.5
 
 require (
 	github.com/guacsec/guac v0.13.2
