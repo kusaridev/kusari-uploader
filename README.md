@@ -1,6 +1,6 @@
 # kusari-uploader
 
-This application ingests SBOMs and Attestations into the Kusari Platform. It uses OAuth2's client credentials flow to generate a pre-signed URL for uploads to an authorized S3 bucket. The application converts SBOMs and other documents to `processor.Document` blobs and uploads them to a tenant specifci S3.
+This application ingests SBOMs and Attestations into the Kusari Platform. It uses OAuth2's client credentials flow to generate a pre-signed URL for uploads to an authorized S3 bucket.
 
 ## Features
 
