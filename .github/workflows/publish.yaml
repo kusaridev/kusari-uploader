@@ -1,5 +1,6 @@
 name: publish
 on:
+  workflow_dispatch: # testing only, trigger manually to test it works
   push:
     branches:
     - main
