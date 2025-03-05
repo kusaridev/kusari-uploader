@@ -28,6 +28,8 @@ import (
 	"github.com/guacsec/guac/pkg/events"
 	"github.com/guacsec/guac/pkg/handler/processor"
 	"github.com/rs/zerolog/log"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
@@ -41,43 +43,108 @@ type HttpClient interface {
 // S3 bucket. Before the files get uploaded, they are converted to processor.Document
 // types that GUAC understands and can ingest.
 func main() {
-	ctx := context.Background()
-
-	if len(os.Args) != 6 {
-		log.Fatal().Msg("Invalid args")
+	// Create the root command
+	var rootCmd = &cobra.Command{
+		Use:   "file-uploader",
+		Short: "Upload files to an S3 bucket using OAuth client credentials",
+		Run:   uploadFiles,
 	}
 
-	filePath := os.Args[1]
-	clientID := os.Args[2]
-	clientSecret := os.Args[3]
-	tenantEndPoint := os.Args[4]
-	tokenEndPoint := os.Args[5]
+	// Define flags
+	rootCmd.Flags().StringP("file-path", "f", "", "Path to file or directory to upload (required)")
+	rootCmd.Flags().StringP("client-id", "c", "", "OAuth client ID (required)")
+	rootCmd.Flags().StringP("client-secret", "s", "", "OAuth client secret (required)")
+	rootCmd.Flags().StringP("tenant-endpoint", "t", "", "Kusari Tenant endpoint URL (required)")
+	rootCmd.Flags().StringP("token-endpoint", "k", "", "Token endpoint URL (required)")
 
+	// Bind flags to Viper with error handling
+	mustBindPFlag(rootCmd, "file-path", "file-path")
+	mustBindPFlag(rootCmd, "client-id", "client-id")
+	mustBindPFlag(rootCmd, "client-secret", "client-secret")
+	mustBindPFlag(rootCmd, "tenant-endpoint", "tenant-endpoint")
+	mustBindPFlag(rootCmd, "token-endpoint", "token-endpoint")
+
+	// Allow environment variables
+	viper.SetEnvPrefix("UPLOADER")
+	viper.AutomaticEnv()
+
+	// Mark flags as required with error handling
+	mustMarkFlagRequired(rootCmd, "file-path")
+	mustMarkFlagRequired(rootCmd, "client-id")
+	mustMarkFlagRequired(rootCmd, "client-secret")
+	mustMarkFlagRequired(rootCmd, "tenant-endpoint")
+	mustMarkFlagRequired(rootCmd, "token-endpoint")
+
+	// Execute the command
+	if err := rootCmd.Execute(); err != nil {
+		log.Fatal().Err(err).Msg("Failed to execute command")
+	}
+}
+
+// Helper function to bind Viper flags with error handling
+func mustBindPFlag(cmd *cobra.Command, configKey string, flagName string) {
+	if err := viper.BindPFlag(configKey, cmd.Flags().Lookup(flagName)); err != nil {
+		log.Fatal().
+			Err(err).
+			Str("configKey", configKey).
+			Str("flagName", flagName).
+			Msg("Failed to bind flag to configuration")
+	}
+}
+
+// Helper function to mark flags as required with error handling
+func mustMarkFlagRequired(cmd *cobra.Command, flagName string) {
+	if err := cmd.MarkFlagRequired(flagName); err != nil {
+		log.Fatal().
+			Err(err).
+			Str("flagName", flagName).
+			Msg("Failed to mark flag as required")
+	}
+}
+
+func uploadFiles(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+
+	// Retrieve configuration values
+	filePath := viper.GetString("file-path")
+	clientID := viper.GetString("client-id")
+	clientSecret := viper.GetString("client-secret")
+	tenantEndPoint := viper.GetString("tenant-endpoint")
+	tokenEndPoint := viper.GetString("token-endpoint")
+
+	// Validate configuration
+	if filePath == "" || clientID == "" || clientSecret == "" ||
+		tenantEndPoint == "" || tokenEndPoint == "" {
+		log.Fatal().Msg("All configuration parameters are required")
+	}
+
+	// Get authorized client
 	authorizedClient := getAuthorizedClient(ctx, clientID, clientSecret, tokenEndPoint)
+	defaultClient := &http.Client{}
 
-	// check if the provided path is a directory or a file
+	// Check if path is a directory or file
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		log.Fatal().
 			Err(err).
-			Msg("error getting file info:")
+			Msg("Error getting file info")
 	}
 
-	defaultClient := &http.Client{}
-
+	// Upload based on file type
 	if fileInfo.IsDir() {
 		if err := uploadDirectory(authorizedClient, defaultClient, tenantEndPoint, filePath); err != nil {
 			log.Fatal().
 				Err(err).
-				Msg("uploadDirectory failed with error")
+				Msg("Directory upload failed")
 		}
 	} else {
 		if err := uploadSingleFile(authorizedClient, defaultClient, tenantEndPoint, filePath); err != nil {
 			log.Fatal().
 				Err(err).
-				Msg("uploadSingleFile failed with error")
+				Msg("Single file upload failed")
 		}
 	}
+
 	fmt.Println("Upload completed successfully")
 }
 
