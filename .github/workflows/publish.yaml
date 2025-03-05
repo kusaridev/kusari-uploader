@@ -1,12 +1,13 @@
 name: publish
 on:
+  workflow_dispatch: # testing only, trigger manually to test it works
   push:
     branches:
     - main
     tags:
       - 'v*'
 permissions:
-  contents: read
+  contents: write # To upload assets to release
   packages: write # To publish container images to GHCR
   # id-token: write # To use GitHub OIDC for AWS auth to publish to ECR
 jobs:
@@ -34,3 +35,14 @@ jobs:
         ko build --bare \
           --platform=linux/amd64,linux/arm64 \
           --tags=latest,sha.${{ github.sha }},${{ github.ref_name }}
+        
+    - name: Run GoReleaser Release
+      # if: startsWith(github.ref, 'refs/tags/')
+      id: run-goreleaser-release
+      uses: goreleaser/goreleaser-action@90a3faa9d0182683851fbfa97ca1a2cb983bfca3 # v6.2.1
+      with:
+        distribution: goreleaser
+        version: latest
+        args: 'release --clean'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
