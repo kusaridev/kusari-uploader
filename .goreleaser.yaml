@@ -1,0 +1,59 @@
+# This is an example .goreleaser.yml file with some sensible defaults.
+# Make sure to check the documentation at https://goreleaser.com
+
+---
+version: 2
+project_name: kusari-uploader
+
+env:
+  - CGO_ENABLED=0
+  - PKG=github.com/guacsec/guac/pkg/version
+
+before:
+  hooks:
+    # You may remove this if you don't use go modules.
+    - go mod tidy
+    # you may remove this if you don't need go generate
+    - go generate ./...
+
+builds:
+  - id: kusari-uploader
+    binary: kusari-uploader-{{ .Os }}-{{ .Arch }}
+    goos: [ 'darwin', 'linux', 'windows' ]
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    ignore:
+      - goos: windows
+        goarch: arm64
+      - goos: windows
+        goarch: arm
+
+sboms:
+  - id: bins
+    artifacts: binary
+    documents:
+      - "${artifact}.spdx.sbom.json"
+
+archives:
+  - formats: [ 'binary' ]
+    name_template: "{{ .Binary }}"
+    allow_different_binary_count: true
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  prerelease: auto
+  draft: false
+  replace_existing_draft: true
+
+# The lines below are called `modelines`. See `:help modeline`
+# Feel free to remove those if you don't want/need to use them.
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
