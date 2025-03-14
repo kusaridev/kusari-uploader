@@ -135,10 +135,7 @@ func Test_uploadDirectory(t *testing.T) {
 	type args struct {
 		tenantApiEndpoint string
 		dirPath           string
-		projectName       string
-		repoName          string
-		pocName           string
-		pocEmail          string
+		uploadMeta        map[string]string
 	}
 	tests := []struct {
 		name    string
@@ -150,10 +147,10 @@ func Test_uploadDirectory(t *testing.T) {
 			args: args{
 				tenantApiEndpoint: "http://example.com",
 				dirPath:           "./testdata",
-				projectName:       "test-project",
-				repoName:          "test-repo",
-				pocName:           "test-poc",
-				pocEmail:          "test@example.com",
+				uploadMeta: map[string]string{
+					"alias": "test-project",
+					"type":  "image",
+				},
 			},
 			wantErr: false,
 		},
@@ -162,17 +159,17 @@ func Test_uploadDirectory(t *testing.T) {
 			args: args{
 				tenantApiEndpoint: "http://example.com",
 				dirPath:           "./nonexistent",
-				projectName:       "test-project",
-				repoName:          "test-repo",
-				pocName:           "test-poc",
-				pocEmail:          "test@example.com",
+				uploadMeta: map[string]string{
+					"alias": "test-project",
+					"type":  "build",
+				},
 			},
 			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := uploadDirectory(authClientMock, defaultClientMock, tt.args.tenantApiEndpoint, tt.args.dirPath, tt.args.projectName, tt.args.repoName, tt.args.pocName, tt.args.pocEmail); (err != nil) != tt.wantErr {
+			if err := uploadDirectory(authClientMock, defaultClientMock, tt.args.tenantApiEndpoint, tt.args.dirPath, tt.args.uploadMeta); (err != nil) != tt.wantErr {
 				t.Errorf("uploadDirectory() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -185,10 +182,7 @@ func Test_uploadSingleFile(t *testing.T) {
 		defaultClient       *ClientMock
 		tenantApiEndpoint   string
 		filePath            string
-		projectName         string
-		repoName            string
-		pocName             string
-		pocEmail            string
+		uploadMeta          map[string]string
 	}
 	tests := []struct {
 		name    string
@@ -217,10 +211,10 @@ func Test_uploadSingleFile(t *testing.T) {
 				},
 				tenantApiEndpoint: "http://example.com",
 				filePath:          "./testdata/hello",
-				projectName:       "test-project",
-				repoName:          "test-repo",
-				pocName:           "test-poc",
-				pocEmail:          "test@example.com",
+				uploadMeta: map[string]string{
+					"alias": "test-project",
+					"type":  "image",
+				},
 			},
 			wantErr: false,
 		},
@@ -229,10 +223,10 @@ func Test_uploadSingleFile(t *testing.T) {
 			args: args{
 				tenantApiEndpoint: "http://example.com",
 				filePath:          "./testdata/empty",
-				projectName:       "test-project",
-				repoName:          "test-repo",
-				pocName:           "test-poc",
-				pocEmail:          "test@example.com",
+				uploadMeta: map[string]string{
+					"alias": "test-project",
+					"type":  "image",
+				},
 			},
 			wantErr: false,
 		},
@@ -264,17 +258,17 @@ func Test_uploadSingleFile(t *testing.T) {
 				},
 				tenantApiEndpoint: "http://example.com",
 				filePath:          "./testdata/hello",
-				projectName:       "test-project",
-				repoName:          "test-repo",
-				pocName:           "test-poc",
-				pocEmail:          "test@example.com",
+				uploadMeta: map[string]string{
+					"alias": "test-project",
+					"type":  "image",
+				},
 			},
 			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := uploadSingleFile(tt.args.authenticatedClient, tt.args.defaultClient, tt.args.tenantApiEndpoint, tt.args.filePath, tt.args.projectName, tt.args.repoName, tt.args.pocName, tt.args.pocEmail); (err != nil) != tt.wantErr {
+			if err := uploadSingleFile(tt.args.authenticatedClient, tt.args.defaultClient, tt.args.tenantApiEndpoint, tt.args.filePath, tt.args.uploadMeta); (err != nil) != tt.wantErr {
 				t.Errorf("uploadSingleFile() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -282,19 +276,11 @@ func Test_uploadSingleFile(t *testing.T) {
 }
 
 func Test_uploadBlob(t *testing.T) {
-	testProjectName := "test-project"
-	testRepoName := "test-repo"
-	testPocName := "test-poc"
-	testPocEmail := "test@example.com"
-
 	type args struct {
 		authenticatedClient *ClientMock
 		presignedUrl        string
 		filePath            string
-		projectName         string
-		repoName            string
-		pocName             string
-		pocEmail            string
+		uploadMeta          map[string]string
 	}
 	tests := []struct {
 		name    string
@@ -314,10 +300,10 @@ func Test_uploadBlob(t *testing.T) {
 				},
 				presignedUrl: "http://example.com/upload",
 				filePath:     "./testdata/hello",
-				projectName:  testProjectName,
-				repoName:     testRepoName,
-				pocName:      testPocName,
-				pocEmail:     testPocEmail,
+				uploadMeta: map[string]string{
+					"alias": "test-project",
+					"type":  "image",
+				},
 			},
 			wantErr: false,
 		},
@@ -334,10 +320,10 @@ func Test_uploadBlob(t *testing.T) {
 				},
 				presignedUrl: "http://example.com/upload",
 				filePath:     "./testdata/hello",
-				projectName:  "",
-				repoName:     "",
-				pocName:      "",
-				pocEmail:     "",
+				uploadMeta: map[string]string{
+					"alias": "test-project",
+					"type":  "image",
+				},
 			},
 			wantErr: false,
 		},
@@ -354,17 +340,17 @@ func Test_uploadBlob(t *testing.T) {
 				},
 				presignedUrl: "http://invalid-url",
 				filePath:     "./testdata/hello",
-				projectName:  testProjectName,
-				repoName:     testRepoName,
-				pocName:      testPocName,
-				pocEmail:     testPocEmail,
+				uploadMeta: map[string]string{
+					"alias": "test-project",
+					"type":  "build",
+				},
 			},
 			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := uploadBlob(tt.args.authenticatedClient, tt.args.presignedUrl, tt.args.filePath, []byte("hello"), tt.args.projectName, tt.args.repoName, tt.args.pocName, tt.args.pocEmail); (err != nil) != tt.wantErr {
+			if err := uploadBlob(tt.args.authenticatedClient, tt.args.presignedUrl, tt.args.filePath, []byte("hello"), tt.args.uploadMeta); (err != nil) != tt.wantErr {
 				t.Errorf("uploadFile() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

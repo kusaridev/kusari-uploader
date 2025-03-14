@@ -18,7 +18,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,7 +25,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/google/uuid"
 	"github.com/guacsec/guac/pkg/events"
 	"github.com/guacsec/guac/pkg/handler/processor"
 	"github.com/rs/zerolog/log"
@@ -40,27 +38,10 @@ type HttpClient interface {
 	Post(url string, contentType string, body io.Reader) (resp *http.Response, err error)
 }
 
-// generateUUIDFromRepoName generates a UUID based on the SHA-256 hash of the repository name
-func generateUUIDFromRepoName(repoName string) *uuid.UUID {
-	if repoName == "" {
-		return nil // Return nil if repoName is not provided
-	}
-	u := uuid.NewHash(sha256.New(), uuid.NameSpaceDNS, []byte(repoName), 5)
-	return &u
-}
-
-type PointOfContact struct {
-	Name  string `json:"name,omitempty"`
-	Email string `json:"email,omitempty"`
-}
-
 // DocumentWrapper holds extra fields without modifying processor.Document
 type DocumentWrapper struct {
 	*processor.Document
-	ID             *uuid.UUID      `json:"id,omitempty"`
-	Project        string          `json:"project,omitempty"`
-	Repo           string          `json:"repo,omitempty"`
-	PointOfContact *PointOfContact `json:"poc,omitempty"`
+	UploadMetaData *map[string]string `json:"upload_metadata,omitempty"`
 }
 
 // This application utilizes oauth client credentials flow to obtain a jwt
@@ -81,10 +62,8 @@ func main() {
 	rootCmd.Flags().StringP("client-secret", "s", "", "OAuth client secret (required)")
 	rootCmd.Flags().StringP("tenant-endpoint", "t", "", "Kusari Tenant endpoint URL (required)")
 	rootCmd.Flags().StringP("token-endpoint", "k", "", "Token endpoint URL (required)")
-	rootCmd.Flags().StringP("project-name", "p", "", "Project Name tag to associate with project in Kusari platform (optional)")
-	rootCmd.Flags().StringP("repo-name", "r", "", "Repository name (optional)")
-	rootCmd.Flags().StringP("poc-name", "n", "", "Point of contact name (optional)")
-	rootCmd.Flags().StringP("poc-email", "e", "", "Point of contact email (optional)")
+	rootCmd.Flags().StringP("alias", "a", "", "Alias that supersedes the subject in Kusari platform (optional)")
+	rootCmd.Flags().StringP("document-type", "d", "", "Type of the document (image or build) sbom (optional)")
 
 	// Bind flags to Viper with error handling
 	mustBindPFlag(rootCmd, "file-path", "file-path")
@@ -92,10 +71,8 @@ func main() {
 	mustBindPFlag(rootCmd, "client-secret", "client-secret")
 	mustBindPFlag(rootCmd, "tenant-endpoint", "tenant-endpoint")
 	mustBindPFlag(rootCmd, "token-endpoint", "token-endpoint")
-	mustBindPFlag(rootCmd, "project-name", "project-name")
-	mustBindPFlag(rootCmd, "repo-name", "repo-name")
-	mustBindPFlag(rootCmd, "poc-name", "poc-name")
-	mustBindPFlag(rootCmd, "poc-email", "poc-email")
+	mustBindPFlag(rootCmd, "alias", "alias")
+	mustBindPFlag(rootCmd, "document-type", "document-type")
 
 	// Allow environment variables
 	viper.SetEnvPrefix("UPLOADER")
@@ -144,10 +121,8 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	clientSecret := viper.GetString("client-secret")
 	tenantEndPoint := viper.GetString("tenant-endpoint")
 	tokenEndPoint := viper.GetString("token-endpoint")
-	projectName := viper.GetString("project-name")
-	repoName := viper.GetString("repo-name")
-	pocName := viper.GetString("poc-name")
-	pocEmail := viper.GetString("poc-email")
+	alias := viper.GetString("alias")
+	docType := viper.GetString("document-type")
 
 	// Validate required configuration
 	if filePath == "" || clientID == "" || clientSecret == "" ||
@@ -166,15 +141,23 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 			Msg("Error getting file info")
 	}
 
+	uploadMeta := map[string]string{}
+	if alias != "" {
+		uploadMeta["alias"] = alias
+	}
+	if docType != "" {
+		uploadMeta["type"] = docType
+	}
+
 	// Upload based on file type
 	if fileInfo.IsDir() {
-		if err := uploadDirectory(authorizedClient, defaultClient, tenantEndPoint, filePath, projectName, repoName, pocName, pocEmail); err != nil {
+		if err := uploadDirectory(authorizedClient, defaultClient, tenantEndPoint, filePath, uploadMeta); err != nil {
 			log.Fatal().
 				Err(err).
 				Msg("Directory upload failed")
 		}
 	} else {
-		if err := uploadSingleFile(authorizedClient, defaultClient, tenantEndPoint, filePath, projectName, repoName, pocName, pocEmail); err != nil {
+		if err := uploadSingleFile(authorizedClient, defaultClient, tenantEndPoint, filePath, uploadMeta); err != nil {
 			log.Fatal().
 				Err(err).
 				Msg("Single file upload failed")
@@ -233,13 +216,13 @@ func getPresignedUrl(authorizedClient HttpClient, tenantApiEndpoint string, payl
 
 // uploadDirectory uses filepath.Walk to walk through the directory and upload the files that are found
 func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoint,
-	dirPath, projectName, repoName, pocName, pocEmail string) error {
+	dirPath string, uploadMeta map[string]string) error {
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() {
-			err = uploadSingleFile(authorizedClient, defaultClient, tenantApiEndpoint, path, projectName, repoName, pocName, pocEmail)
+			err = uploadSingleFile(authorizedClient, defaultClient, tenantApiEndpoint, path, uploadMeta)
 			if err != nil {
 				return fmt.Errorf("uploadSingleFile failed with error: %w", err)
 			}
@@ -250,7 +233,7 @@ func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoi
 }
 
 // uploadSingleFile creates a presigned URL for the filepath and calls uploadFile to upload the actual file
-func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, filePath, projectName, repoName, pocName, pocEmail string) error {
+func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, filePath string, uploadMeta map[string]string) error {
 	// check that the file is not empty
 	checkFile, err := os.Stat(filePath)
 	if err != nil {
@@ -280,11 +263,11 @@ func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpo
 	}
 
 	// pass in default client without the jwt other wise it will error with both the presigned url and jwt
-	return uploadBlob(defaultClient, presignedUrl, filePath, blob, projectName, repoName, pocName, pocEmail)
+	return uploadBlob(defaultClient, presignedUrl, filePath, blob, uploadMeta)
 }
 
 // uploadBlob takes the file and creates a `processor.Document` blob which is uploaded to S3
-func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFile []byte, projectName, repoName, pocName, pocEmail string) error {
+func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFile []byte, uploadMeta map[string]string) error {
 	baseDoc := &processor.Document{
 		Blob:   readFile,
 		Type:   processor.DocumentUnknown,
@@ -299,19 +282,12 @@ func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFil
 	var docByte []byte
 	var err error
 
-	if projectName != "" {
-		poc := PointOfContact{
-			Name:  pocName,
-			Email: pocEmail,
-		}
+	if len(uploadMeta) != 0 {
 
 		// Wrap it with additional metadata about the project
 		docWrapper := DocumentWrapper{
 			Document:       baseDoc,
-			ID:             generateUUIDFromRepoName(repoName),
-			Project:        projectName,
-			Repo:           repoName,
-			PointOfContact: &poc,
+			UploadMetaData: &uploadMeta,
 		}
 
 		docByte, err = json.Marshal(docWrapper)
