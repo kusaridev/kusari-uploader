@@ -26,10 +26,8 @@ go get github.com/kusaridev/kusari-uploader
     -s CLIENT_SECRET \
     -t TENANT_ENDPOINT \
     -k TOKEN_ENDPOINT \
-    --project-name "My Project" \
-    --repo-name "My Repo" \
-    --poc-name "John Doe" \
-    --poc-email "john.doe@example.com"
+    -a "package alias" \
+    -d "image"
 
 # Upload an entire directory
 ./kusari-uploader -f /path/to/directory \
@@ -37,10 +35,8 @@ go get github.com/kusaridev/kusari-uploader
     -s CLIENT_SECRET \
     -t TENANT_ENDPOINT \
     -k TOKEN_ENDPOINT \
-    --project-name "My Project" \
-    --repo-name "My Repo" \
-    --poc-name "John Doe" \
-    --poc-email "john.doe@example.com"
+    -a "package alias" \
+    -d "image"
 ```
 
 ### Environment Variables
@@ -53,10 +49,8 @@ export UPLOADER_CLIENT_ID=your-client-id
 export UPLOADER_CLIENT_SECRET=your-client-secret
 export UPLOADER_TENANT_ENDPOINT=https://tenant-endpoint
 export UPLOADER_TOKEN_ENDPOINT=https://token-endpoint
-export UPLOADER_PROJECT_NAME="My Project"
-export UPLOADER_REPO_NAME="My Repo"
-export UPLOADER_POC_NAME="John Doe"
-export UPLOADER_POC_EMAIL="john.doe@example.com"
+export UPLOADER_ALIAS="package alias"
+export UPLOADER_DOCUMENT-TYPE="image"
 
 ./kusari-uploader
 ```
@@ -70,10 +64,8 @@ export UPLOADER_POC_EMAIL="john.doe@example.com"
 | `-s` / `UPLOADER_CLIENT_SECRET` | OAuth2 Client Secret | Yes |
 | `-t` / `UPLOADER_TENANT_ENDPOINT` | Kusari Tenant endpoint URL | Yes |
 | `-k` / `UPLOADER_TOKEN_ENDPOINT` | Token endpoint URL | Yes |
-| `--project-name` / `UPLOADER_PROJECT_NAME` | Project Name tag to associate with project in Kusari platform | Yes |
-| `--repo-name` / `UPLOADER_REPO_NAME` | Repository Name | Yes |
-| `--poc-name` / `UPLOADER_POC_NAME` | Point of Contact Name | Yes |
-| `--poc-email` / `UPLOADER_POC_EMAIL` | TPoint of Contact Email | Yes |
+| `--alias` / `UPLOADER_ALIAS` | Alias that supersedes the subject in Kusari platform (optional) | No |
+| `--document-type` / `UPLOADER_DOCUMENT-TYPE` | Type of the document (image or build) sbom (optional) | No |
 
 ## Help
 
