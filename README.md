@@ -19,7 +19,6 @@ go get github.com/kusaridev/kusari-uploader
 
 ### Command-Line Flags
 
-```bash
 # Upload a single file
 ./kusari-uploader -f /path/to/file \
     -c CLIENT_ID \
@@ -39,33 +38,17 @@ go get github.com/kusaridev/kusari-uploader
     -d "image"
 ```
 
-### Environment Variables
-
-You can also configure the uploader using environment variables:
-
-```bash
-export UPLOADER_FILE_PATH=/path/to/files
-export UPLOADER_CLIENT_ID=your-client-id
-export UPLOADER_CLIENT_SECRET=your-client-secret
-export UPLOADER_TENANT_ENDPOINT=https://tenant-endpoint
-export UPLOADER_TOKEN_ENDPOINT=https://token-endpoint
-export UPLOADER_ALIAS="package alias"
-export UPLOADER_DOCUMENT-TYPE="image"
-
-./kusari-uploader
-```
-
 ## Configuration Parameters
 
-| Flag/Env Variable | Description | Required |
+| Short Flag/ Full Flag | Description | Required |
 |------------------|-------------|----------|
-| `-f` / `UPLOADER_FILE_PATH` | Path to file or directory to upload | Yes |
-| `-c` / `UPLOADER_CLIENT_ID` | OAuth2 Client ID | Yes |
-| `-s` / `UPLOADER_CLIENT_SECRET` | OAuth2 Client Secret | Yes |
-| `-t` / `UPLOADER_TENANT_ENDPOINT` | Kusari Tenant endpoint URL | Yes |
-| `-k` / `UPLOADER_TOKEN_ENDPOINT` | Token endpoint URL | Yes |
-| `--alias` / `UPLOADER_ALIAS` | Alias that supersedes the subject in Kusari platform (optional) | No |
-| `--document-type` / `UPLOADER_DOCUMENT-TYPE` | Type of the document (image or build) sbom (optional) | No |
+| `-f` / `--file-path` | Path to file or directory to upload | Yes |
+| `-c` / `--client-id` | OAuth2 Client ID | Yes |
+| `-s` / `--client-secret` | OAuth2 Client Secret | Yes |
+| `-t` / `--tenant-endpoint` | Kusari Tenant endpoint URL | Yes |
+| `-k` / `--token-endpoint` | Token endpoint URL | Yes |
+| `--alias` / `--alias` | Alias that supersedes the subject in Kusari platform (optional) | No |
+| `--document-type` / `--document-type` | Type of the document (image or build) sbom (optional) | No |
 
 ## Help
 
@@ -73,4 +56,16 @@ To see all available commands and flags:
 
 ```bash
 ./kusari-uploader --help
+Usage:
+  file-uploader [flags]
+
+Flags:
+  -a, --alias string             Alias that supersedes the subject in Kusari platform (optional)
+  -c, --client-id string         OAuth client ID (required)
+  -s, --client-secret string     OAuth client secret (required)
+  -d, --document-type string     Type of the document (image or build) sbom (optional)
+  -f, --file-path string         Path to file or directory to upload (required)
+  -h, --help                     help for file-uploader
+  -t, --tenant-endpoint string   Kusari Tenant endpoint URL (required)
+  -k, --token-endpoint string    Token endpoint URL (required)
 ```

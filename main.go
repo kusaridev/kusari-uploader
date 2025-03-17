@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/guacsec/guac/pkg/events"
 	"github.com/guacsec/guac/pkg/handler/processor"
@@ -66,13 +67,13 @@ func main() {
 	rootCmd.Flags().StringP("document-type", "d", "", "Type of the document (image or build) sbom (optional)")
 
 	// Bind flags to Viper with error handling
-	mustBindPFlag(rootCmd, "file-path", "file-path")
-	mustBindPFlag(rootCmd, "client-id", "client-id")
-	mustBindPFlag(rootCmd, "client-secret", "client-secret")
-	mustBindPFlag(rootCmd, "tenant-endpoint", "tenant-endpoint")
-	mustBindPFlag(rootCmd, "token-endpoint", "token-endpoint")
-	mustBindPFlag(rootCmd, "alias", "alias")
-	mustBindPFlag(rootCmd, "document-type", "document-type")
+	mustBindPFlag(rootCmd, "file-path")
+	mustBindPFlag(rootCmd, "client-id")
+	mustBindPFlag(rootCmd, "client-secret")
+	mustBindPFlag(rootCmd, "tenant-endpoint")
+	mustBindPFlag(rootCmd, "token-endpoint")
+	mustBindPFlag(rootCmd, "alias")
+	mustBindPFlag(rootCmd, "document-type")
 
 	// Allow environment variables
 	viper.SetEnvPrefix("UPLOADER")
@@ -91,14 +92,18 @@ func main() {
 	}
 }
 
-// Helper function to bind Viper flags with error handling
-func mustBindPFlag(cmd *cobra.Command, configKey string, flagName string) {
-	if err := viper.BindPFlag(configKey, cmd.Flags().Lookup(flagName)); err != nil {
+func mustBindPFlag(cmd *cobra.Command, flagName string) {
+	if bindErr := viper.BindPFlag(flagName, cmd.Flags().Lookup(flagName)); bindErr != nil {
 		log.Fatal().
-			Err(err).
-			Str("configKey", configKey).
+			Err(bindErr).
 			Str("flagName", flagName).
-			Msg("Failed to bind flag to configuration")
+			Msg("Failed bind flags")
+	}
+	if envErr := viper.BindEnv(flagName, "UPLOADER_"+strings.ToUpper(strings.ReplaceAll(flagName, "-", "_"))); envErr != nil {
+		log.Fatal().
+			Err(envErr).
+			Str("flagName", flagName).
+			Msg("Failed bind env")
 	}
 }
 
