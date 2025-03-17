@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/guacsec/guac/pkg/events"
 	"github.com/guacsec/guac/pkg/handler/processor"
@@ -38,6 +39,12 @@ type HttpClient interface {
 	Post(url string, contentType string, body io.Reader) (resp *http.Response, err error)
 }
 
+// DocumentWrapper holds extra fields without modifying processor.Document
+type DocumentWrapper struct {
+	*processor.Document
+	UploadMetaData *map[string]string `json:"upload_metadata,omitempty"`
+}
+
 // This application utilizes oauth client credentials flow to obtain a jwt
 // which can be used to create a presigned url to upload files to an authorized
 // S3 bucket. Before the files get uploaded, they are converted to processor.Document
@@ -50,19 +57,23 @@ func main() {
 		Run:   uploadFiles,
 	}
 
-	// Define flags
+	// Define flags (new flags are optional)
 	rootCmd.Flags().StringP("file-path", "f", "", "Path to file or directory to upload (required)")
 	rootCmd.Flags().StringP("client-id", "c", "", "OAuth client ID (required)")
 	rootCmd.Flags().StringP("client-secret", "s", "", "OAuth client secret (required)")
 	rootCmd.Flags().StringP("tenant-endpoint", "t", "", "Kusari Tenant endpoint URL (required)")
 	rootCmd.Flags().StringP("token-endpoint", "k", "", "Token endpoint URL (required)")
+	rootCmd.Flags().StringP("alias", "a", "", "Alias that supersedes the subject in Kusari platform (optional)")
+	rootCmd.Flags().StringP("document-type", "d", "", "Type of the document (image or build) sbom (optional)")
 
 	// Bind flags to Viper with error handling
-	mustBindPFlag(rootCmd, "file-path", "file-path")
-	mustBindPFlag(rootCmd, "client-id", "client-id")
-	mustBindPFlag(rootCmd, "client-secret", "client-secret")
-	mustBindPFlag(rootCmd, "tenant-endpoint", "tenant-endpoint")
-	mustBindPFlag(rootCmd, "token-endpoint", "token-endpoint")
+	mustBindPFlag(rootCmd, "file-path")
+	mustBindPFlag(rootCmd, "client-id")
+	mustBindPFlag(rootCmd, "client-secret")
+	mustBindPFlag(rootCmd, "tenant-endpoint")
+	mustBindPFlag(rootCmd, "token-endpoint")
+	mustBindPFlag(rootCmd, "alias")
+	mustBindPFlag(rootCmd, "document-type")
 
 	// Allow environment variables
 	viper.SetEnvPrefix("UPLOADER")
@@ -81,14 +92,18 @@ func main() {
 	}
 }
 
-// Helper function to bind Viper flags with error handling
-func mustBindPFlag(cmd *cobra.Command, configKey string, flagName string) {
-	if err := viper.BindPFlag(configKey, cmd.Flags().Lookup(flagName)); err != nil {
+func mustBindPFlag(cmd *cobra.Command, flagName string) {
+	if bindErr := viper.BindPFlag(flagName, cmd.Flags().Lookup(flagName)); bindErr != nil {
 		log.Fatal().
-			Err(err).
-			Str("configKey", configKey).
+			Err(bindErr).
 			Str("flagName", flagName).
-			Msg("Failed to bind flag to configuration")
+			Msg("Failed bind flags")
+	}
+	if envErr := viper.BindEnv(flagName, "UPLOADER_"+strings.ToUpper(strings.ReplaceAll(flagName, "-", "_"))); envErr != nil {
+		log.Fatal().
+			Err(envErr).
+			Str("flagName", flagName).
+			Msg("Failed bind env")
 	}
 }
 
@@ -111,13 +126,14 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	clientSecret := viper.GetString("client-secret")
 	tenantEndPoint := viper.GetString("tenant-endpoint")
 	tokenEndPoint := viper.GetString("token-endpoint")
+	alias := viper.GetString("alias")
+	docType := viper.GetString("document-type")
 
-	// Validate configuration
+	// Validate required configuration
 	if filePath == "" || clientID == "" || clientSecret == "" ||
 		tenantEndPoint == "" || tokenEndPoint == "" {
-		log.Fatal().Msg("All configuration parameters are required")
+		log.Fatal().Msg("All required parameters must be provided")
 	}
-
 	// Get authorized client
 	authorizedClient := getAuthorizedClient(ctx, clientID, clientSecret, tokenEndPoint)
 	defaultClient := &http.Client{}
@@ -130,15 +146,23 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 			Msg("Error getting file info")
 	}
 
+	uploadMeta := map[string]string{}
+	if alias != "" {
+		uploadMeta["alias"] = alias
+	}
+	if docType != "" {
+		uploadMeta["type"] = docType
+	}
+
 	// Upload based on file type
 	if fileInfo.IsDir() {
-		if err := uploadDirectory(authorizedClient, defaultClient, tenantEndPoint, filePath); err != nil {
+		if err := uploadDirectory(authorizedClient, defaultClient, tenantEndPoint, filePath, uploadMeta); err != nil {
 			log.Fatal().
 				Err(err).
 				Msg("Directory upload failed")
 		}
 	} else {
-		if err := uploadSingleFile(authorizedClient, defaultClient, tenantEndPoint, filePath); err != nil {
+		if err := uploadSingleFile(authorizedClient, defaultClient, tenantEndPoint, filePath, uploadMeta); err != nil {
 			log.Fatal().
 				Err(err).
 				Msg("Single file upload failed")
@@ -196,13 +220,14 @@ func getPresignedUrl(authorizedClient HttpClient, tenantApiEndpoint string, payl
 }
 
 // uploadDirectory uses filepath.Walk to walk through the directory and upload the files that are found
-func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, dirPath string) error {
+func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoint,
+	dirPath string, uploadMeta map[string]string) error {
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() {
-			err = uploadSingleFile(authorizedClient, defaultClient, tenantApiEndpoint, path)
+			err = uploadSingleFile(authorizedClient, defaultClient, tenantApiEndpoint, path, uploadMeta)
 			if err != nil {
 				return fmt.Errorf("uploadSingleFile failed with error: %w", err)
 			}
@@ -213,7 +238,7 @@ func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoi
 }
 
 // uploadSingleFile creates a presigned URL for the filepath and calls uploadFile to upload the actual file
-func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, filePath string) error {
+func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, filePath string, uploadMeta map[string]string) error {
 	// check that the file is not empty
 	checkFile, err := os.Stat(filePath)
 	if err != nil {
@@ -243,12 +268,12 @@ func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpo
 	}
 
 	// pass in default client without the jwt other wise it will error with both the presigned url and jwt
-	return uploadBlob(defaultClient, presignedUrl, filePath, blob)
+	return uploadBlob(defaultClient, presignedUrl, filePath, blob, uploadMeta)
 }
 
 // uploadBlob takes the file and creates a `processor.Document` blob which is uploaded to S3
-func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFile []byte) error {
-	doc := &processor.Document{
+func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFile []byte, uploadMeta map[string]string) error {
+	baseDoc := &processor.Document{
 		Blob:   readFile,
 		Type:   processor.DocumentUnknown,
 		Format: processor.FormatUnknown,
@@ -259,9 +284,26 @@ func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFil
 		},
 	}
 
-	docByte, err := json.Marshal(doc)
-	if err != nil {
-		return fmt.Errorf("failed marshal of document: %w", err)
+	var docByte []byte
+	var err error
+
+	if len(uploadMeta) != 0 {
+
+		// Wrap it with additional metadata about the project
+		docWrapper := DocumentWrapper{
+			Document:       baseDoc,
+			UploadMetaData: &uploadMeta,
+		}
+
+		docByte, err = json.Marshal(docWrapper)
+		if err != nil {
+			return fmt.Errorf("failed marshal of document: %w", err)
+		}
+	} else {
+		docByte, err = json.Marshal(baseDoc)
+		if err != nil {
+			return fmt.Errorf("failed marshal of document: %w", err)
+		}
 	}
 
 	req, err := http.NewRequest(http.MethodPut, presignedUrl, bytes.NewBuffer(docByte))
