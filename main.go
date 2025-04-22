@@ -18,6 +18,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,13 +28,88 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/guacsec/guac/pkg/events"
-	"github.com/guacsec/guac/pkg/handler/processor"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/oauth2/clientcredentials"
 )
+
+// Document describes the input for a processor to run. This input can
+// come from a collector or from the processor itself (run recursively).
+type Document struct {
+	Blob              []byte
+	Type              DocumentType
+	Format            FormatType
+	Encoding          EncodingType
+	SourceInformation SourceInformation
+}
+
+// DocumentTree describes the output of a document tree that resulted from
+// processing a node
+type DocumentTree *DocumentNode
+
+// DocumentNode describes a node of a DocumentTree
+type DocumentNode struct {
+	Document *Document
+	Children []*DocumentNode
+}
+
+// DocumentType describes the type of the document contents for schema checks
+type DocumentType string
+
+// Document* is the enumerables of DocumentType
+const (
+	DocumentITE6SLSA    DocumentType = "SLSA"
+	DocumentITE6Generic DocumentType = "ITE6"
+	DocumentITE6Vul     DocumentType = "ITE6VUL"
+	DocumentITE6EOL     DocumentType = "ITE6EOL"
+	// ClearlyDefined
+	DocumentITE6ClearlyDefined DocumentType = "ITE6CD"
+	DocumentDSSE               DocumentType = "DSSE"
+	DocumentSPDX               DocumentType = "SPDX"
+	DocumentOpaque             DocumentType = "OPAQUE"
+	DocumentScorecard          DocumentType = "SCORECARD"
+	DocumentCycloneDX          DocumentType = "CycloneDX"
+	DocumentDepsDev            DocumentType = "DEPS_DEV"
+	DocumentCsaf               DocumentType = "CSAF"
+	DocumentOpenVEX            DocumentType = "OPEN_VEX"
+	DocumentIngestPredicates   DocumentType = "INGEST_PREDICATES"
+	DocumentUnknown            DocumentType = "UNKNOWN"
+)
+
+// FormatType describes the document format for malform checks
+type FormatType string
+
+// Format* is the enumerables of FormatType
+const (
+	FormatJSON      FormatType = "JSON"
+	FormatJSONLines FormatType = "JSON_LINES"
+	FormatXML       FormatType = "XML"
+	FormatUnknown   FormatType = "UNKNOWN"
+)
+
+type EncodingType string
+
+const (
+	EncodingBzip2   EncodingType = "BZIP2"
+	EncodingZstd    EncodingType = "ZSTD"
+	EncodingUnknown EncodingType = "UNKNOWN"
+)
+
+var EncodingExts = map[string]EncodingType{
+	".bz2": EncodingBzip2,
+	".zst": EncodingZstd,
+}
+
+// SourceInformation provides additional information about where the document comes from
+type SourceInformation struct {
+	// Collector describes the name of the collector providing this information
+	Collector string
+	// Source describes the source which the collector got this information
+	Source string
+	// DocumentRef describes the location of the document in the blob store
+	DocumentRef string
+}
 
 type HttpClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -41,7 +118,7 @@ type HttpClient interface {
 
 // DocumentWrapper holds extra fields without modifying processor.Document
 type DocumentWrapper struct {
-	*processor.Document
+	*Document
 	UploadMetaData *map[string]string `json:"upload_metadata,omitempty"`
 }
 
@@ -256,7 +333,7 @@ func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpo
 
 	// Prepare the payload for the presigned URL request
 	payload := map[string]string{
-		"filename": events.GetDocRef(blob),
+		"filename": getDocRef(blob),
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -273,14 +350,14 @@ func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpo
 
 // uploadBlob takes the file and creates a `processor.Document` blob which is uploaded to S3
 func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFile []byte, uploadMeta map[string]string) error {
-	baseDoc := &processor.Document{
+	baseDoc := &Document{
 		Blob:   readFile,
-		Type:   processor.DocumentUnknown,
-		Format: processor.FormatUnknown,
-		SourceInformation: processor.SourceInformation{
+		Type:   DocumentUnknown,
+		Format: FormatUnknown,
+		SourceInformation: SourceInformation{
 			Collector:   "Kusari-Uploader",
 			Source:      fmt.Sprintf("file:///%s", filePath),
-			DocumentRef: events.GetDocRef(readFile),
+			DocumentRef: getDocRef(readFile),
 		},
 	}
 
@@ -333,4 +410,19 @@ func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFil
 	}
 
 	return nil
+}
+
+func getKey(blob []byte) string {
+	generatedHash := getHash(blob)
+	return fmt.Sprintf("sha256_%s", generatedHash)
+}
+
+// GetDocRef returns the Document Reference of a blob; i.e. the blob store key for this blob.
+func getDocRef(blob []byte) string {
+	return getKey(blob)
+}
+
+func getHash(data []byte) string {
+	sha256sum := sha256.Sum256(data)
+	return hex.EncodeToString(sha256sum[:])
 }
