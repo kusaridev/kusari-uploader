@@ -59,22 +59,8 @@ type DocumentType string
 
 // Document* is the enumerables of DocumentType
 const (
-	DocumentITE6SLSA    DocumentType = "SLSA"
-	DocumentITE6Generic DocumentType = "ITE6"
-	DocumentITE6Vul     DocumentType = "ITE6VUL"
-	DocumentITE6EOL     DocumentType = "ITE6EOL"
-	// ClearlyDefined
-	DocumentITE6ClearlyDefined DocumentType = "ITE6CD"
-	DocumentDSSE               DocumentType = "DSSE"
-	DocumentSPDX               DocumentType = "SPDX"
-	DocumentOpaque             DocumentType = "OPAQUE"
-	DocumentScorecard          DocumentType = "SCORECARD"
-	DocumentCycloneDX          DocumentType = "CycloneDX"
-	DocumentDepsDev            DocumentType = "DEPS_DEV"
-	DocumentCsaf               DocumentType = "CSAF"
-	DocumentOpenVEX            DocumentType = "OPEN_VEX"
-	DocumentIngestPredicates   DocumentType = "INGEST_PREDICATES"
-	DocumentUnknown            DocumentType = "UNKNOWN"
+	DocumentSBOM    DocumentType = "SBOM"
+	DocumentOpenVEX DocumentType = "OPEN_VEX"
 )
 
 // FormatType describes the document format for malform checks
@@ -142,6 +128,10 @@ func main() {
 	rootCmd.Flags().StringP("token-endpoint", "k", "", "Token endpoint URL (required)")
 	rootCmd.Flags().StringP("alias", "a", "", "Alias that supersedes the subject in Kusari platform (optional)")
 	rootCmd.Flags().StringP("document-type", "d", "", "Type of the document (image or build) sbom (optional)")
+	rootCmd.Flags().Bool("open-vex", false, "Indicate that this is an OpenVEX document (optional, only works with files)")
+	rootCmd.Flags().String("tag", "", "Tag value to set in the document wrapper upload meta (optional, e.g. govulncheck)")
+	rootCmd.Flags().String("software-id", "", "Kusari Platform Software ID value to set in the document wrapper upload meta (optional)")
+	rootCmd.Flags().String("sbom-subject", "", "Kusari Platform Software sbom subject substring value to set in the document wrapper upload meta (optional)")
 
 	// Bind flags to Viper with error handling
 	mustBindPFlag(rootCmd, "file-path")
@@ -151,6 +141,10 @@ func main() {
 	mustBindPFlag(rootCmd, "token-endpoint")
 	mustBindPFlag(rootCmd, "alias")
 	mustBindPFlag(rootCmd, "document-type")
+	mustBindPFlag(rootCmd, "open-vex")
+	mustBindPFlag(rootCmd, "tag")
+	mustBindPFlag(rootCmd, "software-id")
+	mustBindPFlag(rootCmd, "sbom-subject")
 
 	// Allow environment variables
 	viper.SetEnvPrefix("UPLOADER")
@@ -205,12 +199,21 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	tokenEndPoint := viper.GetString("token-endpoint")
 	alias := viper.GetString("alias")
 	docType := viper.GetString("document-type")
+	isOpenVex := viper.GetBool("open-vex")
+	tag := viper.GetString("tag")
+	softwareID := viper.GetString("software-id")
+	sbomSubject := viper.GetString("sbom-subject")
 
 	// Validate required configuration
 	if filePath == "" || clientID == "" || clientSecret == "" ||
 		tenantEndPoint == "" || tokenEndPoint == "" {
 		log.Fatal().Msg("All required parameters must be provided")
 	}
+
+	if isOpenVex && (tag == "" || (softwareID == "" && sbomSubject == "")) {
+		log.Fatal().Msg("When using OpenVEX, tag must be specified, and so must software-id or sbom-subject")
+	}
+
 	// Get authorized client
 	authorizedClient := getAuthorizedClient(ctx, clientID, clientSecret, tokenEndPoint)
 	defaultClient := &http.Client{}
@@ -223,12 +226,25 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 			Msg("Error getting file info")
 	}
 
+	if fileInfo.IsDir() && isOpenVex {
+		log.Fatal().Msg("OpenVEX can't be used with directories, only single files")
+	}
+
 	uploadMeta := map[string]string{}
 	if alias != "" {
 		uploadMeta["alias"] = alias
 	}
 	if docType != "" {
 		uploadMeta["type"] = docType
+	}
+	if tag != "" {
+		uploadMeta["tag"] = tag
+	}
+	if softwareID != "" {
+		uploadMeta["software_id"] = softwareID
+	}
+	if sbomSubject != "" {
+		uploadMeta["sbom_subject"] = sbomSubject
 	}
 
 	// Upload based on file type
@@ -239,7 +255,7 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 				Msg("Directory upload failed")
 		}
 	} else {
-		if err := uploadSingleFile(authorizedClient, defaultClient, tenantEndPoint, filePath, uploadMeta); err != nil {
+		if err := uploadSingleFile(authorizedClient, defaultClient, tenantEndPoint, filePath, isOpenVex, uploadMeta); err != nil {
 			log.Fatal().
 				Err(err).
 				Msg("Single file upload failed")
@@ -297,14 +313,13 @@ func getPresignedUrl(authorizedClient HttpClient, tenantApiEndpoint string, payl
 }
 
 // uploadDirectory uses filepath.Walk to walk through the directory and upload the files that are found
-func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoint,
-	dirPath string, uploadMeta map[string]string) error {
+func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, dirPath string, uploadMeta map[string]string) error {
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() {
-			err = uploadSingleFile(authorizedClient, defaultClient, tenantApiEndpoint, path, uploadMeta)
+			err = uploadSingleFile(authorizedClient, defaultClient, tenantApiEndpoint, path, false, uploadMeta)
 			if err != nil {
 				return fmt.Errorf("uploadSingleFile failed with error: %w", err)
 			}
@@ -315,7 +330,8 @@ func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoi
 }
 
 // uploadSingleFile creates a presigned URL for the filepath and calls uploadFile to upload the actual file
-func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, filePath string, uploadMeta map[string]string) error {
+func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, filePath string, isOpenVex bool,
+	uploadMeta map[string]string) error {
 	// check that the file is not empty
 	checkFile, err := os.Stat(filePath)
 	if err != nil {
@@ -345,14 +361,21 @@ func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpo
 	}
 
 	// pass in default client without the jwt other wise it will error with both the presigned url and jwt
-	return uploadBlob(defaultClient, presignedUrl, filePath, blob, uploadMeta)
+	return uploadBlob(defaultClient, presignedUrl, filePath, blob, isOpenVex, uploadMeta)
 }
 
 // uploadBlob takes the file and creates a `processor.Document` blob which is uploaded to S3
-func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFile []byte, uploadMeta map[string]string) error {
+func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFile []byte, isOpenVex bool,
+	uploadMeta map[string]string) error {
+
+	doctype := DocumentSBOM
+	if isOpenVex {
+		doctype = DocumentOpenVEX
+	}
+
 	baseDoc := &Document{
 		Blob:   readFile,
-		Type:   DocumentUnknown,
+		Type:   doctype,
 		Format: FormatUnknown,
 		SourceInformation: SourceInformation{
 			Collector:   "Kusari-Uploader",
