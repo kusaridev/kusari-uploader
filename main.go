@@ -142,6 +142,9 @@ func main() {
 	rootCmd.Flags().StringP("token-endpoint", "k", "", "Token endpoint URL (required)")
 	rootCmd.Flags().StringP("alias", "a", "", "Alias that supersedes the subject in Kusari platform (optional)")
 	rootCmd.Flags().StringP("document-type", "d", "", "Type of the document (image or build) sbom (optional)")
+	rootCmd.Flags().StringP("tag", "", "", "Tag value to set in the document wrapper upload meta (optional, e.g. govulncheck)")
+	rootCmd.Flags().StringP("software-id", "", "", "Kusari Platform Software ID value to set in the document wrapper upload meta (optional)")
+	rootCmd.Flags().StringP("sbom-subject", "", "", "Kusari Platform Software sbom subject substring value to set in the document wrapper upload meta (optional)")
 
 	// Bind flags to Viper with error handling
 	mustBindPFlag(rootCmd, "file-path")
@@ -151,6 +154,9 @@ func main() {
 	mustBindPFlag(rootCmd, "token-endpoint")
 	mustBindPFlag(rootCmd, "alias")
 	mustBindPFlag(rootCmd, "document-type")
+	mustBindPFlag(rootCmd, "tag")
+	mustBindPFlag(rootCmd, "software-id")
+	mustBindPFlag(rootCmd, "sbom-subject")
 
 	// Allow environment variables
 	viper.SetEnvPrefix("UPLOADER")
@@ -205,6 +211,9 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	tokenEndPoint := viper.GetString("token-endpoint")
 	alias := viper.GetString("alias")
 	docType := viper.GetString("document-type")
+	tag := viper.GetString("tag")
+	softwareID := viper.GetString("software-id")
+	sbomSubject := viper.GetString("sbom-subject")
 
 	// Validate required configuration
 	if filePath == "" || clientID == "" || clientSecret == "" ||
@@ -229,6 +238,15 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	}
 	if docType != "" {
 		uploadMeta["type"] = docType
+	}
+	if tag != "" {
+		uploadMeta["tag"] = tag
+	}
+	if softwareID != "" {
+		uploadMeta["software_id"] = softwareID
+	}
+	if sbomSubject != "" {
+		uploadMeta["sbom_subject"] = sbomSubject
 	}
 
 	// Upload based on file type
@@ -350,9 +368,14 @@ func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpo
 
 // uploadBlob takes the file and creates a `processor.Document` blob which is uploaded to S3
 func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFile []byte, uploadMeta map[string]string) error {
+	doctype, ok := uploadMeta["type"]
+	if !ok {
+		doctype = string(DocumentUnknown)
+	}
+
 	baseDoc := &Document{
 		Blob:   readFile,
-		Type:   DocumentUnknown,
+		Type:   DocumentType(doctype),
 		Format: FormatUnknown,
 		SourceInformation: SourceInformation{
 			Collector:   "Kusari-Uploader",
