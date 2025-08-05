@@ -132,6 +132,7 @@ func main() {
 	rootCmd.Flags().String("tag", "", "Tag value to set in the document wrapper upload meta (optional, e.g. govulncheck)")
 	rootCmd.Flags().String("software-id", "", "Kusari Platform Software ID value to set in the document wrapper upload meta (optional)")
 	rootCmd.Flags().String("sbom-subject", "", "Kusari Platform Software sbom subject substring value to set in the document wrapper upload meta (optional)")
+	rootCmd.Flags().String("component-name", "", "Kusari Platform component name (optional)")
 
 	// Bind flags to Viper with error handling
 	mustBindPFlag(rootCmd, "file-path")
@@ -145,6 +146,7 @@ func main() {
 	mustBindPFlag(rootCmd, "tag")
 	mustBindPFlag(rootCmd, "software-id")
 	mustBindPFlag(rootCmd, "sbom-subject")
+	mustBindPFlag(rootCmd, "component-name")
 
 	// Allow environment variables
 	viper.SetEnvPrefix("UPLOADER")
@@ -203,6 +205,7 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	tag := viper.GetString("tag")
 	softwareID := viper.GetString("software-id")
 	sbomSubject := viper.GetString("sbom-subject")
+	componentName := viper.GetString("component-name")
 
 	// Validate required configuration
 	if filePath == "" || clientID == "" || clientSecret == "" ||
@@ -245,6 +248,9 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	}
 	if sbomSubject != "" {
 		uploadMeta["sbom_subject"] = sbomSubject
+	}
+	if componentName != "" {
+		uploadMeta["component_name"] = componentName
 	}
 
 	// Upload based on file type
