@@ -39,7 +39,6 @@ go get github.com/kusaridev/kusari-uploader
 ```
 
 ## Configuration Parameters
-
 | Short Flag/ Full Flag | Description | Required |
 |------------------|-------------|----------|
 | `-f` / `--file-path` | Path to file or directory to upload | Yes |
@@ -47,8 +46,13 @@ go get github.com/kusaridev/kusari-uploader
 | `-s` / `--client-secret` | OAuth2 Client Secret | Yes |
 | `-t` / `--tenant-endpoint` | Kusari Tenant endpoint URL | Yes |
 | `-k` / `--token-endpoint` | Token endpoint URL | Yes |
-| `--alias` / `--alias` | Alias that supersedes the subject in Kusari platform (optional) | No |
-| `--document-type` / `--document-type` | Type of the document (image or build) sbom (optional) | No |
+| `--alias` | Alias that supersedes the subject in Kusari platform (optional) | No |
+| `--document-type` | Type of the document (image or build) sbom (optional) | No |
+| `--open-vex` | Indicate that this is an OpenVEX document (only works with files) | No |
+| `--tag` | Tag value to set in the document wrapper upload meta (e.g. govulncheck) | No |
+| `--software-id` | Kusari Platform Software ID value to set in the document wrapper upload meta | No |
+| `--sbom-subject` | Kusari Platform Software sbom subject substring value to set in the document wrapper upload meta | No |
+| `--component-name` | Kusari Platform component name | No |
 
 ## Help
 
@@ -63,9 +67,14 @@ Flags:
   -a, --alias string             Alias that supersedes the subject in Kusari platform (optional)
   -c, --client-id string         OAuth client ID (required)
   -s, --client-secret string     OAuth client secret (required)
+      --component-name string    Kusari Platform component name (optional)
   -d, --document-type string     Type of the document (image or build) sbom (optional)
   -f, --file-path string         Path to file or directory to upload (required)
   -h, --help                     help for file-uploader
+      --open-vex                 Indicate that this is an OpenVEX document (optional, only works with files)
+      --sbom-subject string      Kusari Platform Software sbom subject substring value to set in the document wrapper upload meta (optional)
+      --software-id string       Kusari Platform Software ID value to set in the document wrapper upload meta (optional)
+      --tag string               Tag value to set in the document wrapper upload meta (optional, e.g. govulncheck)
   -t, --tenant-endpoint string   Kusari Tenant endpoint URL (required)
   -k, --token-endpoint string    Token endpoint URL (required)
-```
+  ```
