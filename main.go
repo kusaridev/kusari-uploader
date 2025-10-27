@@ -288,7 +288,11 @@ func getPresignedUrl(authorizedClient HttpClient, tenantApiEndpoint string, payl
 	if err != nil {
 		return "", fmt.Errorf("failed to POST to tenant endpoint: %s, with error: %w", tenantApiEndpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); err != nil {
+			err = closeErr
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized {
@@ -423,7 +427,11 @@ func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFil
 	if err != nil {
 		return fmt.Errorf("failed to http.Client Do with error: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); err != nil {
+			err = closeErr
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized {
