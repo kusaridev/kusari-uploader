@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +32,8 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/net/http/httpproxy"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
@@ -219,7 +222,7 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 
 	// Get authorized client
 	authorizedClient := getAuthorizedClient(ctx, clientID, clientSecret, tokenEndPoint)
-	defaultClient := &http.Client{}
+	defaultClient := getProxyAwareClient()
 
 	// Check if path is a directory or file
 	fileInfo, err := os.Stat(filePath)
@@ -279,7 +282,10 @@ func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL s
 		TokenURL:     tokenURL,
 	}
 
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, getProxyAwareClient)
+
 	return config.Client(ctx)
+
 }
 
 // getPresignedUrl utilizes authorized client to obtain the presigned URL to upload to S3
@@ -462,4 +468,20 @@ func getDocRef(blob []byte) string {
 func getHash(data []byte) string {
 	sha256sum := sha256.Sum256(data)
 	return hex.EncodeToString(sha256sum[:])
+}
+
+// getProxyAwareClient creates an HTTP client that respects proxy environment variables
+func getProxyAwareClient() *http.Client {
+	// Create a custom transport with proxy support
+	transport := &http.Transport{
+		Proxy: func(req *http.Request) (*url.URL, error) {
+			// Get proxy configuration from environment
+			proxyConfig := httpproxy.FromEnvironment()
+			return proxyConfig.ProxyFunc()(req.URL)
+		},
+	}
+
+	return &http.Client{
+		Transport: transport,
+	}
 }
