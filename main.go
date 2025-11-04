@@ -24,14 +24,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/oauth2/clientcredentials"
+	"golang.org/x/sync/errgroup"
 )
 
 // Document describes the input for a processor to run. This input can
@@ -133,6 +137,7 @@ func main() {
 	rootCmd.Flags().String("software-id", "", "Kusari Platform Software ID value to set in the document wrapper upload meta (optional)")
 	rootCmd.Flags().String("sbom-subject", "", "Kusari Platform Software sbom subject substring value to set in the document wrapper upload meta (optional)")
 	rootCmd.Flags().String("component-name", "", "Kusari Platform component name (optional)")
+	rootCmd.Flags().Bool("check-blocked-packages", false, "Check if any of the SBOMs uses a package contained in the blocked package list")
 
 	// Bind flags to Viper with error handling
 	mustBindPFlag(rootCmd, "file-path")
@@ -147,6 +152,7 @@ func main() {
 	mustBindPFlag(rootCmd, "software-id")
 	mustBindPFlag(rootCmd, "sbom-subject")
 	mustBindPFlag(rootCmd, "component-name")
+	mustBindPFlag(rootCmd, "check-blocked-packages")
 
 	// Allow environment variables
 	viper.SetEnvPrefix("UPLOADER")
@@ -190,6 +196,11 @@ func mustMarkFlagRequired(cmd *cobra.Command, flagName string) {
 	}
 }
 
+type sbomSubjectAndURI struct {
+	subject string
+	uri     string
+}
+
 func uploadFiles(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
@@ -206,6 +217,7 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	softwareID := viper.GetString("software-id")
 	sbomSubject := viper.GetString("sbom-subject")
 	componentName := viper.GetString("component-name")
+	checkBlockedPackages := viper.GetBool("check-blocked-packages")
 
 	// Validate required configuration
 	if filePath == "" || clientID == "" || clientSecret == "" ||
@@ -218,7 +230,7 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	}
 
 	// Get authorized client
-	authorizedClient := getAuthorizedClient(ctx, clientID, clientSecret, tokenEndPoint)
+	authorizedClient, tokenSrc := getAuthorizedClient(ctx, clientID, clientSecret, tokenEndPoint)
 	defaultClient := &http.Client{}
 
 	// Check if path is a directory or file
@@ -253,33 +265,174 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 		uploadMeta["component_name"] = componentName
 	}
 
+	var ssaus []sbomSubjectAndURI
 	// Upload based on file type
 	if fileInfo.IsDir() {
-		if err := uploadDirectory(authorizedClient, defaultClient, tenantEndPoint, filePath, uploadMeta); err != nil {
+		ssaus, err = uploadDirectory(authorizedClient, defaultClient, tenantEndPoint, filePath, uploadMeta)
+		if err != nil {
 			log.Fatal().
 				Err(err).
 				Msg("Directory upload failed")
 		}
 	} else {
-		if err := uploadSingleFile(authorizedClient, defaultClient, tenantEndPoint, filePath, isOpenVex, uploadMeta); err != nil {
+		ssau, err := uploadSingleFile(authorizedClient, defaultClient, tenantEndPoint, filePath, isOpenVex, uploadMeta)
+		if err != nil {
 			log.Fatal().
 				Err(err).
 				Msg("Single file upload failed")
 		}
+		ssaus = []sbomSubjectAndURI{ssau}
 	}
 
 	fmt.Println("Upload completed successfully")
+
+	if checkBlockedPackages {
+		blocked, err := checkSBOMsForBlockedPackages(ctx, tokenSrc, tenantEndPoint, ssaus)
+		if err != nil {
+			log.Fatal().
+				Err(err).
+				Msg("Error checking for blocked packages")
+		}
+
+		if blocked {
+			os.Exit(1)
+		}
+	}
+}
+
+type softwareIDAndSbomID struct {
+	SoftwareID int64 `json:"software_id"`
+	SbomID     int64 `json:"sbom_id"`
+}
+
+type blockedPackages struct {
+	Blocked         bool     `json:"blocked"`
+	BlockedPackages []string `json:"blocked_packages"`
+}
+
+func checkSBOMsForBlockedPackages(ctx context.Context, ts *clientcredentials.Config, tenantEndpoint string, ssaus []sbomSubjectAndURI) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(5)
+
+	client := &http.Client{}
+
+	blocked := make([]bool, len(ssaus))
+	blockedPurls := make([][]string, len(ssaus))
+
+	for i, ssau := range ssaus {
+		if ssau.subject == "" && ssau.uri == "" {
+			continue
+		}
+
+		g.Go(func() error {
+			var ids softwareIDAndSbomID
+
+			for {
+				res, err := makePicoReq(ctx, client, ts, tenantEndpoint, fmt.Sprintf("app/pico/v1/software/id?software_name=%s&sbom_uri=%s",
+					url.QueryEscape(ssau.subject), url.QueryEscape(ssau.uri)))
+				if err != nil {
+					return fmt.Errorf("error making request for IDs: %w", err)
+				}
+				defer res.Body.Close() //nolint:errcheck
+
+				if res.StatusCode == 200 {
+					body, err := io.ReadAll(res.Body)
+					if err != nil {
+						return fmt.Errorf("error reading response body for IDs: %w", err)
+					}
+
+					if err := json.Unmarshal(body, &ids); err != nil {
+						return fmt.Errorf("error unmarshaling response body for IDs: %w", err)
+					}
+
+					break
+				} else if res.StatusCode == 404 {
+					time.Sleep(time.Second)
+				} else {
+					return fmt.Errorf("unexpected response status code for IDs: %d", res.StatusCode)
+				}
+			}
+
+			res, err := makePicoReq(ctx, client, ts, tenantEndpoint, fmt.Sprintf("app/pico/v1/packages/blocked/check/software/%d/sbom/%d",
+				ids.SoftwareID, ids.SbomID))
+			if err != nil {
+				return fmt.Errorf("error making request for check: %w", err)
+			}
+			defer res.Body.Close() //nolint:errcheck
+
+			if res.StatusCode == 200 {
+				body, err := io.ReadAll(res.Body)
+				if err != nil {
+					return fmt.Errorf("error reading response body for check: %w", err)
+				}
+
+				var bps blockedPackages
+				if err := json.Unmarshal(body, &bps); err != nil {
+					return fmt.Errorf("error unmarshaling response body for check: %w", err)
+				}
+
+				if bps.Blocked {
+					blocked[i] = true
+					blockedPurls[i] = bps.BlockedPackages
+				}
+			} else {
+				return fmt.Errorf("unexpected response status code for check: %d", res.StatusCode)
+			}
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return false, err
+	}
+
+	for i, v := range blocked {
+		if v {
+			fmt.Printf("Blocked packages found for SBOM subject %s with URI %s\n", ssaus[i].subject, ssaus[i].uri)
+			for _, bp := range blockedPurls[i] {
+				fmt.Println(bp)
+			}
+			fmt.Println()
+		}
+	}
+
+	return slices.Contains(blocked, true), nil
+}
+
+func makePicoReq(ctx context.Context, client *http.Client, ts *clientcredentials.Config, tenantURL, pathAndQS string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/%s", tenantURL, pathAndQS), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	tok, err := ts.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Cookie", fmt.Sprintf("accessToken=%s", tok.AccessToken))
+
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
 }
 
 // getAuthorizedClient utilizes oauth2 client credential flow to obtain an authorized client
-func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL string) HttpClient {
+func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL string) (HttpClient, *clientcredentials.Config) {
 	config := &clientcredentials.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		TokenURL:     tokenURL,
 	}
 
-	return config.Client(ctx)
+	return config.Client(ctx), config
 }
 
 // getPresignedUrl utilizes authorized client to obtain the presigned URL to upload to S3
@@ -323,38 +476,42 @@ func getPresignedUrl(authorizedClient HttpClient, tenantApiEndpoint string, payl
 }
 
 // uploadDirectory uses filepath.Walk to walk through the directory and upload the files that are found
-func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, dirPath string, uploadMeta map[string]string) error {
+func uploadDirectory(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, dirPath string, uploadMeta map[string]string) ([]sbomSubjectAndURI, error) {
+	var ssaus []sbomSubjectAndURI
+
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() {
-			err = uploadSingleFile(authorizedClient, defaultClient, tenantApiEndpoint, path, false, uploadMeta)
+			ssau, err := uploadSingleFile(authorizedClient, defaultClient, tenantApiEndpoint, path, false, uploadMeta)
 			if err != nil {
 				return fmt.Errorf("uploadSingleFile failed with error: %w", err)
 			}
+			ssaus = append(ssaus, ssau)
 		}
 		return nil
 	})
-	return err
+
+	return ssaus, err
 }
 
 // uploadSingleFile creates a presigned URL for the filepath and calls uploadFile to upload the actual file
 func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpoint, filePath string, isOpenVex bool,
-	uploadMeta map[string]string) error {
+	uploadMeta map[string]string) (sbomSubjectAndURI, error) {
 	// check that the file is not empty
 	checkFile, err := os.Stat(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to get stats on filepath: %s, with error: %w", filePath, err)
+		return sbomSubjectAndURI{}, fmt.Errorf("failed to get stats on filepath: %s, with error: %w", filePath, err)
 	}
 	// if file is empty, do not upload and return nil
 	if checkFile.Size() == 0 {
-		return nil
+		return sbomSubjectAndURI{}, nil
 	}
 
 	blob, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("error reading file: %s, err: %w", filePath, err)
+		return sbomSubjectAndURI{}, fmt.Errorf("error reading file: %s, err: %w", filePath, err)
 	}
 
 	// Prepare the payload for the presigned URL request
@@ -363,20 +520,36 @@ func uploadSingleFile(authorizedClient, defaultClient HttpClient, tenantApiEndpo
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("error creating JSON payload: %w", err)
+		return sbomSubjectAndURI{}, fmt.Errorf("error creating JSON payload: %w", err)
 	}
 	presignedUrl, err := getPresignedUrl(authorizedClient, tenantApiEndpoint, payloadBytes)
 	if err != nil {
-		return err
+		return sbomSubjectAndURI{}, err
 	}
 
 	// pass in default client without the jwt other wise it will error with both the presigned url and jwt
 	return uploadBlob(defaultClient, presignedUrl, filePath, blob, isOpenVex, uploadMeta)
 }
 
+type cdxSBOM struct {
+	BOMFormat    string `json:"bomFormat"`
+	SerialNumber string `json:"serialNumber"`
+	Metadata     struct {
+		Component struct {
+			Name string `json:"name"`
+		} `json:"component"`
+	} `json:"metadata"`
+}
+
+type spdxSBOM struct {
+	SPDXID            string `json:"SPDXID"`
+	DocumentNamespace string `json:"documentNamespace"`
+	Name              string `json:"name"`
+}
+
 // uploadBlob takes the file and creates a `processor.Document` blob which is uploaded to S3
 func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFile []byte, isOpenVex bool,
-	uploadMeta map[string]string) error {
+	uploadMeta map[string]string) (sbomSubjectAndURI, error) {
 
 	doctype := DocumentSBOM
 	if isOpenVex {
@@ -407,25 +580,25 @@ func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFil
 
 		docByte, err = json.Marshal(docWrapper)
 		if err != nil {
-			return fmt.Errorf("failed marshal of document: %w", err)
+			return sbomSubjectAndURI{}, fmt.Errorf("failed marshal of document: %w", err)
 		}
 	} else {
 		docByte, err = json.Marshal(baseDoc)
 		if err != nil {
-			return fmt.Errorf("failed marshal of document: %w", err)
+			return sbomSubjectAndURI{}, fmt.Errorf("failed marshal of document: %w", err)
 		}
 	}
 
 	req, err := http.NewRequest(http.MethodPut, presignedUrl, bytes.NewBuffer(docByte))
 	if err != nil {
-		return fmt.Errorf("failed to create new http request with error: %w", err)
+		return sbomSubjectAndURI{}, fmt.Errorf("failed to create new http request with error: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "multipart/form-data")
 
 	resp, err := defaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to http.Client Do with error: %w", err)
+		return sbomSubjectAndURI{}, fmt.Errorf("failed to http.Client Do with error: %w", err)
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); err != nil {
@@ -435,18 +608,33 @@ func uploadBlob(defaultClient HttpClient, presignedUrl, filePath string, readFil
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("uploadBlob failed with unauthorized request: %d", resp.StatusCode)
+			return sbomSubjectAndURI{}, fmt.Errorf("uploadBlob failed with unauthorized request: %d", resp.StatusCode)
 		}
 		// otherwise return an error
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return sbomSubjectAndURI{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upload failed: %s", body)
+		return sbomSubjectAndURI{}, fmt.Errorf("upload failed: %s", body)
 	}
 
-	return nil
+	// Get SBOM subjects and URIs for checking against the blocked package list.
+	var cdx cdxSBOM
+	if err := json.Unmarshal(readFile, &cdx); err == nil { // inverted error check
+		if cdx.BOMFormat == "CycloneDX" && cdx.Metadata.Component.Name != "" && cdx.SerialNumber != "" {
+			return sbomSubjectAndURI{subject: cdx.Metadata.Component.Name, uri: cdx.SerialNumber}, nil
+		}
+	}
+
+	var spdx spdxSBOM
+	if err := json.Unmarshal(readFile, &spdx); err == nil { // inverted error check
+		if spdx.SPDXID == "SPDXRef-DOCUMENT" && spdx.Name != "" && spdx.DocumentNamespace != "" {
+			return sbomSubjectAndURI{subject: spdx.Name, uri: spdx.DocumentNamespace + "#DOCUMENT"}, nil
+		}
+	}
+
+	return sbomSubjectAndURI{}, nil
 }
 
 func getKey(blob []byte) string {
