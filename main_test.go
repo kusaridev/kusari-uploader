@@ -170,7 +170,7 @@ func Test_uploadDirectory(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := uploadDirectory(authClientMock, defaultClientMock, tt.args.tenantApiEndpoint, tt.args.dirPath, tt.args.uploadMeta); (err != nil) != tt.wantErr {
+			if _, err := uploadDirectory(authClientMock, defaultClientMock, tt.args.tenantApiEndpoint, tt.args.dirPath, tt.args.uploadMeta); (err != nil) != tt.wantErr {
 				t.Errorf("uploadDirectory() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -271,7 +271,7 @@ func Test_uploadSingleFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, isOpenVex := range []bool{false, true} {
 				t.Run(fmt.Sprintf("isOpenVex is %v", isOpenVex), func(t *testing.T) {
-					if err := uploadSingleFile(tt.args.authenticatedClient, tt.args.defaultClient, tt.args.tenantApiEndpoint, tt.args.filePath, isOpenVex, tt.args.uploadMeta); (err != nil) != tt.wantErr {
+					if _, err := uploadSingleFile(tt.args.authenticatedClient, tt.args.defaultClient, tt.args.tenantApiEndpoint, tt.args.filePath, isOpenVex, tt.args.uploadMeta); (err != nil) != tt.wantErr {
 						t.Errorf("uploadSingleFile() error = %v, wantErr %v", err, tt.wantErr)
 					}
 				})
@@ -357,7 +357,7 @@ func Test_uploadBlob(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, isOpenVex := range []bool{false, true} {
 				t.Run(fmt.Sprintf("isOpenVex is %v", isOpenVex), func(t *testing.T) {
-					if err := uploadBlob(tt.args.authenticatedClient, tt.args.presignedUrl, tt.args.filePath, []byte("hello"), isOpenVex, tt.args.uploadMeta); (err != nil) != tt.wantErr {
+					if _, err := uploadBlob(tt.args.authenticatedClient, tt.args.presignedUrl, tt.args.filePath, []byte("hello"), isOpenVex, tt.args.uploadMeta); (err != nil) != tt.wantErr {
 						t.Errorf("uploadFile() error = %v, wantErr %v", err, tt.wantErr)
 					}
 				})
