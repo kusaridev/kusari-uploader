@@ -230,7 +230,7 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	}
 
 	// Get authorized client
-	authorizedClient, tokenSrc := getAuthorizedClient(ctx, clientID, clientSecret, tokenEndPoint)
+	authorizedClient := getAuthorizedClient(ctx, clientID, clientSecret, tokenEndPoint)
 	defaultClient := &http.Client{}
 
 	// Check if path is a directory or file
@@ -287,7 +287,7 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	fmt.Println("Upload completed successfully")
 
 	if checkBlockedPackages {
-		blocked, err := checkSBOMsForBlockedPackages(ctx, tokenSrc, tenantEndPoint, ssaus)
+		blocked, err := checkSBOMsForBlockedPackages(ctx, authorizedClient, tenantEndPoint, ssaus)
 		if err != nil {
 			log.Fatal().
 				Err(err).
@@ -310,14 +310,12 @@ type blockedPackages struct {
 	BlockedPackages []string `json:"blocked_packages"`
 }
 
-func checkSBOMsForBlockedPackages(ctx context.Context, ts *clientcredentials.Config, tenantEndpoint string, ssaus []sbomSubjectAndURI) (bool, error) {
+func checkSBOMsForBlockedPackages(ctx context.Context, client HttpClient, tenantEndpoint string, ssaus []sbomSubjectAndURI) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(5)
-
-	client := &http.Client{}
 
 	blocked := make([]bool, len(ssaus))
 	blockedPurls := make([][]string, len(ssaus))
@@ -331,7 +329,7 @@ func checkSBOMsForBlockedPackages(ctx context.Context, ts *clientcredentials.Con
 			var ids softwareIDAndSbomID
 
 			for {
-				res, err := makePicoReq(ctx, client, ts, tenantEndpoint, fmt.Sprintf("app/pico/v1/software/id?software_name=%s&sbom_uri=%s",
+				res, err := makePicoReq(ctx, client, tenantEndpoint, fmt.Sprintf("pico/v1/software/id?software_name=%s&sbom_uri=%s",
 					url.QueryEscape(ssau.subject), url.QueryEscape(ssau.uri)))
 				if err != nil {
 					return fmt.Errorf("error making request for IDs: %w", err)
@@ -356,7 +354,7 @@ func checkSBOMsForBlockedPackages(ctx context.Context, ts *clientcredentials.Con
 				}
 			}
 
-			res, err := makePicoReq(ctx, client, ts, tenantEndpoint, fmt.Sprintf("app/pico/v1/packages/blocked/check/software/%d/sbom/%d",
+			res, err := makePicoReq(ctx, client, tenantEndpoint, fmt.Sprintf("pico/v1/packages/blocked/check/software/%d/sbom/%d",
 				ids.SoftwareID, ids.SbomID))
 			if err != nil {
 				return fmt.Errorf("error making request for check: %w", err)
@@ -403,18 +401,11 @@ func checkSBOMsForBlockedPackages(ctx context.Context, ts *clientcredentials.Con
 	return slices.Contains(blocked, true), nil
 }
 
-func makePicoReq(ctx context.Context, client *http.Client, ts *clientcredentials.Config, tenantURL, pathAndQS string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/%s", tenantURL, pathAndQS), nil)
+func makePicoReq(ctx context.Context, client HttpClient, tenantURL, pathAndQS string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/%s", tenantURL, pathAndQS), nil)
 	if err != nil {
 		return nil, err
 	}
-
-	tok, err := ts.Token(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Cookie", fmt.Sprintf("accessToken=%s", tok.AccessToken))
 
 	res, err := client.Do(req)
 	if err != nil {
@@ -425,14 +416,14 @@ func makePicoReq(ctx context.Context, client *http.Client, ts *clientcredentials
 }
 
 // getAuthorizedClient utilizes oauth2 client credential flow to obtain an authorized client
-func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL string) (HttpClient, *clientcredentials.Config) {
+func getAuthorizedClient(ctx context.Context, clientID, clientSecret, tokenURL string) HttpClient {
 	config := &clientcredentials.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		TokenURL:     tokenURL,
 	}
 
-	return config.Client(ctx), config
+	return config.Client(ctx)
 }
 
 // getPresignedUrl utilizes authorized client to obtain the presigned URL to upload to S3
