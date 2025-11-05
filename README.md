@@ -53,6 +53,7 @@ go get github.com/kusaridev/kusari-uploader
 | `--software-id` | Kusari Platform Software ID value to set in the document wrapper upload meta | No |
 | `--sbom-subject` | Kusari Platform Software sbom subject substring value to set in the document wrapper upload meta | No |
 | `--component-name` | Kusari Platform component name | No |
+| `--check-blocked-packages` | Check if any of the SBOMs uses a package contained in the blocked package list | No |
 
 ## Help
 
@@ -60,11 +61,14 @@ To see all available commands and flags:
 
 ```bash
 ./kusari-uploader --help
+Upload files to an S3 bucket using OAuth client credentials
+
 Usage:
   file-uploader [flags]
 
 Flags:
   -a, --alias string             Alias that supersedes the subject in Kusari platform (optional)
+      --check-blocked-packages   Check if any of the SBOMs uses a package contained in the blocked package list
   -c, --client-id string         OAuth client ID (required)
   -s, --client-secret string     OAuth client secret (required)
       --component-name string    Kusari Platform component name (optional)
