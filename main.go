@@ -129,7 +129,7 @@ func main() {
 	rootCmd.Flags().StringP("client-id", "c", "", "OAuth client ID (required)")
 	rootCmd.Flags().StringP("client-secret", "s", "", "OAuth client secret (required)")
 	rootCmd.Flags().StringP("tenant-endpoint", "t", "", "Kusari Tenant endpoint URL (required)")
-	rootCmd.Flags().StringP("token-endpoint", "k", "", "Token endpoint URL (required)")
+	rootCmd.Flags().StringP("token-endpoint", "k", "https://auth.us.kusari.cloud/oauth2/token", "Token endpoint URL")
 	rootCmd.Flags().StringP("alias", "a", "", "Alias that supersedes the subject in Kusari platform (optional)")
 	rootCmd.Flags().StringP("document-type", "d", "", "Type of the document (image or build) sbom (optional)")
 	rootCmd.Flags().Bool("open-vex", false, "Indicate that this is an OpenVEX document (optional, only works with files)")

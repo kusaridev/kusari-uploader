@@ -45,7 +45,7 @@ go get github.com/kusaridev/kusari-uploader
 | `-c` / `--client-id` | OAuth2 Client ID | Yes |
 | `-s` / `--client-secret` | OAuth2 Client Secret | Yes |
 | `-t` / `--tenant-endpoint` | Kusari Tenant endpoint URL | Yes |
-| `-k` / `--token-endpoint` | Token endpoint URL | Yes |
+| `-k` / `--token-endpoint` | Token endpoint URL | No |
 | `--alias` | Alias that supersedes the subject in Kusari platform (optional) | No |
 | `--document-type` | Type of the document (image or build) sbom (optional) | No |
 | `--open-vex` | Indicate that this is an OpenVEX document (only works with files) | No |
@@ -80,5 +80,5 @@ Flags:
       --software-id string       Kusari Platform Software ID value to set in the document wrapper upload meta (optional)
       --tag string               Tag value to set in the document wrapper upload meta (optional, e.g. govulncheck)
   -t, --tenant-endpoint string   Kusari Tenant endpoint URL (required)
-  -k, --token-endpoint string    Token endpoint URL (required)
+  -k, --token-endpoint string    Token endpoint URL
   ```
