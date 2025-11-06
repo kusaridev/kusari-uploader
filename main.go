@@ -158,13 +158,6 @@ func main() {
 	viper.SetEnvPrefix("UPLOADER")
 	viper.AutomaticEnv()
 
-	// Mark flags as required with error handling
-	mustMarkFlagRequired(rootCmd, "file-path")
-	mustMarkFlagRequired(rootCmd, "client-id")
-	mustMarkFlagRequired(rootCmd, "client-secret")
-	mustMarkFlagRequired(rootCmd, "tenant-endpoint")
-	mustMarkFlagRequired(rootCmd, "token-endpoint")
-
 	// Execute the command
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal().Err(err).Msg("Failed to execute command")
@@ -183,16 +176,6 @@ func mustBindPFlag(cmd *cobra.Command, flagName string) {
 			Err(envErr).
 			Str("flagName", flagName).
 			Msg("Failed bind env")
-	}
-}
-
-// Helper function to mark flags as required with error handling
-func mustMarkFlagRequired(cmd *cobra.Command, flagName string) {
-	if err := cmd.MarkFlagRequired(flagName); err != nil {
-		log.Fatal().
-			Err(err).
-			Str("flagName", flagName).
-			Msg("Failed to mark flag as required")
 	}
 }
 
@@ -222,7 +205,7 @@ func uploadFiles(cmd *cobra.Command, args []string) {
 	// Validate required configuration
 	if filePath == "" || clientID == "" || clientSecret == "" ||
 		tenantEndPoint == "" || tokenEndPoint == "" {
-		log.Fatal().Msg("All required parameters must be provided")
+		log.Fatal().Msg("All required flag(s) must be provided: client-id, client-secret, file-path, tenant-endpoint, token-endpoint")
 	}
 
 	if isOpenVex && (tag == "" || (softwareID == "" && sbomSubject == "")) {
