@@ -158,6 +158,10 @@ func main() {
 	viper.SetEnvPrefix("UPLOADER")
 	viper.AutomaticEnv()
 
+    // Print the EOL message
+    fmt.Println("WARNING: kusari-uploader will be EOL on April 7, 2026. Use kusari-cli:")
+    fmt.Println("     https://docs.kusari.cloud/software/ingest-sboms/kusari-uploader")
+
 	// Execute the command
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal().Err(err).Msg("Failed to execute command")
