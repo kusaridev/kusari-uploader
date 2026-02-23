@@ -1,5 +1,10 @@
 # kusari-uploader
 
+**kusari-uploader will reach end-of-life on April 7, 2026.**
+After this date, kusari-uploader will receive no further updates, including security updates.
+Users will need to switch to the [kusari-cli](https://docs.kusari.cloud/software/ingest-sboms/kusari-uploader) tool before then.
+The [kusari-ingest](https://docs.kusari.cloud/software/ingest-sboms/github-action) GitHub Action now uses kusari-cli, so users of that Action do not need to make any changes.
+
 This application ingests SBOMs and Attestations into the Kusari Platform. It uses OAuth2's client credentials flow to generate a pre-signed URL for uploads to an authorized S3 bucket.
 
 ## Features
